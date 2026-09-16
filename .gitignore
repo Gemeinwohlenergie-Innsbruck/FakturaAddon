@@ -1,4 +1,22 @@
-# .gitignore
+# Secrets - NEVER commit these. They hold MAIL_PASSWORD and EEG_PASSWORD.
+.env
 config.json
+
+# Local templates
 template_invoice.docx
 email_template.html
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+
+# Build output
+build/
+dist/
+*.spec

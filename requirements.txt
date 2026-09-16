@@ -4,6 +4,7 @@ numpy
 pandas
 beautifulsoup4
 docxtpl
+docx2pdf
 jinja2
 openpyxl
 matplotlib

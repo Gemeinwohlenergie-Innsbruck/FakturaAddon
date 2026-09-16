@@ -25,6 +25,18 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # Catches a dependency that is imported but missing from requirements.txt,
+      # which would otherwise ship as an EXE that dies before the window appears.
+      - name: Smoke test imports
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "import main; print('all imports resolved')"
+
+      - name: Run tests
+        run: |
+          pip install pytest
+          python -m pytest tests -q
+
       - name: Build EXE
         run: >
           pyinstaller
