@@ -642,3 +642,53 @@ class SendPreviewDialog(QDialog):
     def confirm(self):
         self.result = True
         self.accept()
+
+
+def test_mail_login(address, password, imap_host, smtp_host, smtp_port, timeout=10):
+    """Try logging in to IMAP and SMTP. Returns (ok, lines).
+
+    Exists so credentials are proved from the settings dialog rather than
+    discovered to be wrong partway through a send to the whole membership.
+    Never returns the password in its messages.
+    """
+    lines = []
+    ok = True
+
+    if not address or not password:
+        return False, ["Mailadresse und Passwort werden benötigt."]
+
+    if imap_host:
+        try:
+            with imaplib.IMAP4_SSL(imap_host, 993, timeout=timeout) as imap:
+                imap.login(address, password)
+            lines.append(f"IMAP ({imap_host}:993): OK")
+        except Exception as e:
+            ok = False
+            lines.append(f"IMAP ({imap_host}:993): {e}")
+    else:
+        lines.append("IMAP: kein Server angegeben")
+
+    if smtp_host:
+        try:
+            port = int(smtp_port or 587)
+        except (TypeError, ValueError):
+            port = 587
+        try:
+            context = ssl.create_default_context()
+            if port == 465:
+                session = smtplib.SMTP_SSL(smtp_host, port, context=context, timeout=timeout)
+            else:
+                session = smtplib.SMTP(smtp_host, port, timeout=timeout)
+            with session as smtp:
+                if port != 465:
+                    smtp.starttls(context=context)
+                smtp.login(address, password)
+            lines.append(f"SMTP ({smtp_host}:{port}): OK")
+        except Exception as e:
+            ok = False
+            lines.append(f"SMTP ({smtp_host}:{port}): {e}")
+    else:
+        ok = False
+        lines.append("SMTP: kein Server angegeben - ohne SMTP kann nicht verschickt werden.")
+
+    return ok, lines

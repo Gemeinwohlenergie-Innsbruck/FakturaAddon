@@ -387,7 +387,8 @@ import requests
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QFormLayout, QLineEdit,
-    QPushButton, QDialogButtonBox, QLabel, QVBoxLayout, QHBoxLayout, QFileDialog
+    QPushButton, QDialogButtonBox, QLabel, QVBoxLayout, QHBoxLayout, QFileDialog,
+    QCheckBox
 )
 
 # Single source of truth. Three copies of these used to live in this file,
@@ -524,8 +525,27 @@ class SettingsDialog(QDialog):
 
         self.edit_my_mail     = QLineEdit()
         self.edit_imap_server = QLineEdit()
+        self.edit_smtp_server = QLineEdit()
+        self.edit_smtp_port   = QLineEdit()
+        self.edit_smtp_port.setPlaceholderText("587")
+        self.edit_smtp_port.setMaximumWidth(90)
         self.edit_my_mail_pw  = QLineEdit()
         self.edit_my_mail_pw.setEchoMode(QLineEdit.Password)
+        # Reveal, so a mistyped password can be spotted without sending to
+        # the whole membership to find out.
+        self.edit_my_mail_pw.setPlaceholderText("wird nur lokal in .env gespeichert")
+        show_pw = QCheckBox("anzeigen")
+        show_pw.toggled.connect(
+            lambda on: self.edit_my_mail_pw.setEchoMode(
+                QLineEdit.Normal if on else QLineEdit.Password))
+        pw_row = QHBoxLayout()
+        pw_row.addWidget(self.edit_my_mail_pw)
+        pw_row.addWidget(show_pw)
+
+        smtp_row = QHBoxLayout()
+        smtp_row.addWidget(self.edit_smtp_server)
+        smtp_row.addWidget(QLabel("Port:"))
+        smtp_row.addWidget(self.edit_smtp_port)
         self.edit_eeg_name    = QLineEdit()
 
         # Home directory with browse button
@@ -552,23 +572,34 @@ class SettingsDialog(QDialog):
         email_row.addWidget(email_browse)
 
         form.addRow("Mailadresse:", self.edit_my_mail)
-        form.addRow("IMAP-Server:", self.edit_imap_server)
-        form.addRow("Mail-Passwort:", self.edit_my_mail_pw)
+        form.addRow("Mail-Passwort:", pw_row)
+        form.addRow("IMAP-Server (Posteingang):", self.edit_imap_server)
+        form.addRow("SMTP-Server (Versand):", smtp_row)
         form.addRow("Basisordner:", dir_row)
         form.addRow("Name der EEG:", self.edit_eeg_name)
         form.addRow("Rechnungsvorlage:", invoice_row)
         form.addRow("Emailvorlage:", email_row)
         layout.addLayout(form)
 
-        note = QLabel("Alle Felder sind optional.")
+        note = QLabel("Zugangsdaten werden unverschlüsselt in .env neben dem Programm "
+                      "gespeichert. Diese Datei niemals weitergeben oder committen.")
+        note.setWordWrap(True)
         layout.addWidget(note)
 
+        self.test_result = QLabel("")
+        self.test_result.setWordWrap(True)
+        self.test_result.setVisible(False)
+        layout.addWidget(self.test_result)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        self.test_button = buttons.addButton("Verbindung testen", QDialogButtonBox.ActionRole)
+        self.test_button.clicked.connect(self._on_test)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
         for field in (self.edit_my_mail, self.edit_imap_server,
+                      self.edit_smtp_server, self.edit_smtp_port,
                       self.edit_my_mail_pw, self.edit_home_directory,
                       self.edit_eeg_name, self.edit_template_invoice,
                       self.edit_template_email):
@@ -578,6 +609,10 @@ class SettingsDialog(QDialog):
         saved = load_env()
         self.edit_my_mail.setText(saved.get("my_mail", ""))
         self.edit_imap_server.setText(saved.get("imap_server", ""))
+        # Older .env files predate the SMTP fields; fall back to what the app
+        # used to assume so existing installs keep working untouched.
+        self.edit_smtp_server.setText(saved.get("smtp_server", "") or saved.get("imap_server", ""))
+        self.edit_smtp_port.setText(saved.get("smtp_port", "") or "587")
         self.edit_my_mail_pw.setText(saved.get("my_mail_pw", ""))
         self.edit_home_directory.setText(saved.get("home_directory", ""))
         self.edit_eeg_name.setText(saved.get("EEG_name", ""))
@@ -599,6 +634,26 @@ class SettingsDialog(QDialog):
         if path:
             edit.setText(path)
 
+    def _on_test(self):
+        """Prove the credentials here rather than during a send."""
+        from emailing import test_mail_login
+        settings = self.get_settings()
+        self.test_result.setVisible(True)
+        self.test_result.setText("Teste Verbindung…")
+        self.test_button.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            ok, lines = test_mail_login(settings["my_mail"], settings["my_mail_pw"],
+                                        settings["imap_server"], settings["smtp_server"],
+                                        settings["smtp_port"])
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.test_button.setEnabled(True)
+        colour = "#1f6b55" if ok else "#a4283a"
+        self.test_result.setStyleSheet(f"color: {colour};")
+        self.test_result.setText("\n".join(lines))
+
     def _on_save(self):
         settings = self.get_settings()
         save_env(settings)
@@ -608,6 +663,9 @@ class SettingsDialog(QDialog):
         return {
             "my_mail":                  self.edit_my_mail.text().strip(),
             "imap_server":              self.edit_imap_server.text().strip(),
+            "smtp_server":              (self.edit_smtp_server.text().strip()
+                                         or self.edit_imap_server.text().strip()),
+            "smtp_port":                self.edit_smtp_port.text().strip() or "587",
             "my_mail_pw":               self.edit_my_mail_pw.text(),
             "home_directory":           self.edit_home_directory.text().strip(),
             "EEG_name":                 self.edit_eeg_name.text().strip(),

@@ -409,6 +409,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # parked in a layout is not the window's menu bar, sizes oddly, and
         # never reaches the macOS menu bar.
         menubar = self.menuBar()
+        # Settings was buried at the bottom of an unrelated menu.
+        settings_menu = menubar.addMenu("Einstellungen")
+        settings_action = QtWidgets.QAction("Einstellungen…", self)
+        # Explicit shortcut and NoRole: PreferencesRole would move this into
+        # the macOS application menu and leave the menu here empty.
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.setMenuRole(QtWidgets.QAction.NoRole)
+        settings_action.triggered.connect(self.open_settings)
+        settings_menu.addAction(settings_action)
         self.menubardata_Make_invoices = self.init_menubardata_make_invoices()
         if self.menubardata_Make_invoices:
             self._build_menu(menubar, "Rechnungen erstellen und verschicken",
@@ -469,6 +478,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.update_status_header()
         self.refresh_workflow()
         self.restore_geometry()
+
+    def open_settings(self):
+        """Edit the local .env, then pick the changes up without a restart."""
+        dlg = SettingsDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            self.config = load_env()
+            self.home_directory = self.config.get("home_directory", "")
+            self.on_data_changed()
 
     def section_label(self, text):
         label = QLabel(text)
@@ -1119,12 +1136,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 creds = dlg.get_credentials()
                 print(creds)
                 # creds["user"], creds["login"], creds["tenant"], creds["password"]
-        def change_Settings():
-            dlg = SettingsDialog()
-            if dlg.exec_() == QDialog.Accepted:
-                creds = dlg.get_credentials()
-                print(creds)
-
         def collect_findings():
             return validation.validate(
                 invoices=self.invoices, masterdata=self.masterdata, energydata=self.energydata,
@@ -1463,12 +1474,25 @@ class MainWindow(QtWidgets.QMainWindow):
                         print("Send cancelled in the preview dialog")
                         return
 
+                    # Falls back to the IMAP host and 587, which is what the
+                    # app assumed before there were SMTP settings at all.
+                    smtp_host = self.config.get("smtp_server", "") or self.config.get("imap_server", "")
+                    try:
+                        smtp_port = int(self.config.get("smtp_port", "") or 587)
+                    except ValueError:
+                        smtp_port = 587
+
                     sent, failed = [], []
                     for person_data, fpinvoicefile in jobs:
                         print(f"Send Mail to: {person_data['E-Mail']}")
                         try:
-                            send_mail_to_one_person(self.config.get("my_mail", ""),self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""),self.config.get("EEG_name", ""),person_data["E-Mail"],person_data["Name 1"],
-                                                    self.thisinvoice_quart, self.thisinvoices_year, self.emails.template, fpinvoicefile, self.masterdata)
+                            send_mail_to_one_person(
+                                self.config.get("my_mail", ""), self.config.get("my_mail_pw", ""),
+                                smtp_host, self.config.get("EEG_name", ""),
+                                person_data["E-Mail"], person_data["Name 1"],
+                                self.thisinvoice_quart, self.thisinvoices_year,
+                                self.emails.template, fpinvoicefile, self.masterdata,
+                                port=smtp_port)
                             sent.append(person_data["E-Mail"])
                         except Exception as e:
                             # One bad address must not abort a run that has
@@ -1510,7 +1534,7 @@ class MainWindow(QtWidgets.QMainWindow):
                        ["Überprüfe die Qualität der Energiedaten", "", check_energydata, "check_energy"],
                        ["Erstelle alle Rechnungen", "", create_invoices_and_save, "create_invoices"],
                        ["Verschicke die Rechnungen per Mail", "", send_invoices_mail, "send_mail"],
-                       ["Einstellungen", "", change_Settings]]
+                       ]
         return menubardata
 
 

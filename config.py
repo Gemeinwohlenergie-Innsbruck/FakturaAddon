@@ -20,6 +20,8 @@ ENV_KEYS = {
     "community_id":            "EEG_COMMUNITY_ID",
     "my_mail":                 "MAIL_ADDRESS",
     "imap_server":             "MAIL_IMAP_SERVER",
+    "smtp_server":             "MAIL_SMTP_SERVER",
+    "smtp_port":               "MAIL_SMTP_PORT",
     "my_mail_pw":              "MAIL_PASSWORD",
     "home_directory":          "HOME_DIRECTORY",
     "EEG_name":                "EEG_NAME",
