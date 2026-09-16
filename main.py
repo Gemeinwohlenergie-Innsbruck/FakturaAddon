@@ -13,6 +13,7 @@ import sys
 from PyQt5.QtWidgets import QLabel, QFileDialog, QMessageBox, QGridLayout, QTableWidget, QTableWidgetItem, QListWidget, QWidget, QListWidgetItem, QCheckBox, QListWidgetItem, QPushButton, QVBoxLayout, QDialog
 from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
+from selection import select_invoice_positions
 from PyQt5.QtWidgets import QHBoxLayout
 import datetime as dt
 import imaplib
@@ -132,20 +133,22 @@ class MainWindow(QtWidgets.QMainWindow):
             return values
 
         self.config = load_env()
-        print(f"Conf: {self.config}")
+        # Never print the config itself - it holds MAIL_PASSWORD and EEG_PASSWORD.
+        print(f"Loaded {len(self.config)} settings from {ENV_PATH}")
         if not self.config:
-            print("No config .env file, lets create one")
+            print("No .env configuration found - opening the settings dialog")
             dlg = SettingsDialog()
-            if dlg.exec_() == QDialog.Accepted:
-                pass
+            if dlg.exec_() != QDialog.Accepted:
+                # Carrying on with an empty config crashes on the next line.
+                raise SystemExit(0)
+            # SettingsDialog writes to .env; without this re-read self.config
+            # stays empty and every lookup below fails.
+            self.config = load_env()
 
-        # with open("templates/config.json", 'r') as file:
-        #     self.config = json.load(file)
-
-        self.home_directory = self.config["home_directory"]
+        self.home_directory = self.config.get("home_directory", "")
         paths_datanames = ["Rechnungsdaten","EEG Faktura Stammdaten","EEG Faktura Quartalsenergiedaten","EEG Faktura Quartalsenergiedaten QOV","Rechnungen Vorlage", "Emails Vorlage"]
         self.loaded_filepaths = pd.DataFrame({"Daten":paths_datanames,
-                                  "Speicherort":["Auswählen","Auswählen","Auswählen","Auswählen",self.config["template_export_invoice"],self.config["template_email"]],
+                                  "Speicherort":["Auswählen"]*len(paths_datanames),
                                               })
         # promptwindows
 
@@ -319,7 +322,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 load_faktura_template(filepath = filepath)
 
         def load_template_invoice_from_fp(filepath):
-            if filepath is not None:
+            if filepath:
                 invoices_template = self.invoices.load_template(filepath=filepath)
                 if invoices_template is not None:
                     self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
@@ -383,7 +386,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 load_energydata_fp(filepath, load_qov = load_qov)
 
         def load_emaildata_fp(filepath):
-            if filepath is not None:
+            if filepath:
                 email_temp = self.emails.load_template(filepath=filepath)
                 if email_temp is not None:
                     self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
@@ -404,8 +407,10 @@ class MainWindow(QtWidgets.QMainWindow):
         for index,function in enumerate(allfunctions):
             table_widget_in_which_loading_is_done.functions_on_row_clicked[index] = function
 
-        load_template_invoice_from_fp(self.loaded_filepaths.loc[self.loaded_filepaths["Daten"] == "Rechnungen Vorlage","Speicherort"].iloc[0])
-        load_emaildata_fp(self.loaded_filepaths.loc[self.loaded_filepaths["Daten"] == "Emails Vorlage","Speicherort"].iloc[0])
+        # Auto-load the templates named in .env. Both loaders return early on an
+        # empty path, so an install with no templates configured still starts.
+        load_template_invoice_from_fp(self.config.get("template_export_invoice", ""))
+        load_emaildata_fp(self.config.get("template_email", ""))
 
 
         # loadp_masterdata_from_fp(self.loaded_filepaths.loc[self.loaded_filepaths["Daten"] == "EEG Faktura Stammdaten","Speicherort"].iloc[0])
@@ -493,52 +498,53 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
                     def get_selected_names():
-                        nr_list_widgets = len(self.exportwindow.list_data)
-                        selected_names = [False] * nr_list_widgets
-                        for index,checkbox in enumerate(self.exportwindow.list_data):
-                            if checkbox.isChecked():
-                                selected_names[index] = True
+                        # One checkbox per row of data["list"], built in row order
+                        # above, so this mask indexes that frame directly.
+                        selected_mask = [cb.isChecked() for cb in self.exportwindow.list_data]
+                        invoices_selected_names, selected_names = select_invoice_positions(
+                            self.invoices.data["list"], self.invoices.data["detailed"], selected_mask)
+                        if selected_names.empty:
+                            QMessageBox.warning(self, "Keine Auswahl",
+                                                "Es ist niemand ausgewählt - es wird nichts exportiert.")
+                            return
+                        print(f"{len(selected_names)} von {len(selected_mask)} Empfänger:innen ausgewählt")
 
-                        print(self.invoices.data["list"].loc[selected_names]["Empfänger Name"])
-                        invoices_selected_names = self.invoices.data["detailed"][self.invoices.data["detailed"]["Empfänger Name"].isin(self.invoices.data["list"]["Empfänger Name"])]
+                        exportingdebit,exportingtransfer,doublesprocess = produce_sepa_export_dfs(invoices_selected_names,self.config.get("EEG_name",""))
 
-                        exportingdebit,exportingtransfer,doublesprocess = produce_sepa_export_dfs(invoices_selected_names,self.config["EEG_name"])
-
-
-                        print(f"df = {exportingdebit,exportingtransfer}")
                         date_str = datetime.date.today().strftime("%d_%m_%Y")
+
+                        def save_csv(df, filepath, what):
+                            if not filepath.lower().endswith(".csv"):
+                                filepath = f"{filepath}.csv"
+                            print(f"Export {what} to: {filepath}")
+                            try:
+                                df.to_csv(filepath, index=False, sep=";")
+                            except Exception as e:
+                                print(f"Saving {what} failed: {e}")
+                                QMessageBox.critical(self, "Speichern fehlgeschlagen",
+                                                     f"{what} konnten nicht gespeichert werden:\n{filepath}\n\n{e}")
+
                         filepath1 = load_filepath(self, "Wähle Speicherort für Export für SEPA Lastschrift aus",
                                                   filter="csv (*.csv)", fileex=False,
                                                   defaultfilename=f"Lastschriften_Infinity_export_{date_str}",
                                                   homedir=self.home_directory)
 
                         if exportingdebit is not None:
-                            if filepath1 is not None:
-                                if ".csv" not in filepath1:
-                                    filepath1 = f"{filepath1}.csv"
-                                print(f"Export to: {filepath1}")
-                                try:
-                                        exportingdebit.to_csv(filepath1, index=False,sep=";")
-                                except:
-                                    errorbox = QMessageBox("Saving didnot work")
-                                    print("savning didnot work")
-                            else: return
-                        if exportingtransfer is not None:
-                            filepath2 = load_filepath(self,"Wähle Speicherort für Export für Überweisungen aus",
-                                                      filter="csv (*.csv)", fileex=False, defaultfilename=f"Überweisungen_Infinity_export_{datetime.date.today().strftime("%d_%m_%Y")}",homedir= os.path.dirname(filepath1))
+                            if filepath1 is None:
+                                return
+                            save_csv(exportingdebit, filepath1, "Lastschriften")
 
+                        if exportingtransfer is not None:
+                            homedir2 = os.path.dirname(filepath1) if filepath1 else self.home_directory
+                            filepath2 = load_filepath(self,"Wähle Speicherort für Export für Überweisungen aus",
+                                                      filter="csv (*.csv)", fileex=False,
+                                                      defaultfilename=f"Überweisungen_Infinity_export_{date_str}",
+                                                      homedir=homedir2)
                             if filepath2 is not None:
-                                if ".csv" not in filepath2:
-                                    filepath2 = f"{filepath2}.csv"
-                                print(f"Export to: {filepath2}")
-                                try:
-                                        exportingtransfer.to_csv(filepath2, index=False,sep=";")
-                                except:
-                                    errorbox = QMessageBox("Saving didnot work")
-                                    print("savning didnot work")
-                        else:
-                            return
+                                save_csv(exportingtransfer, filepath2, "Überweisungen")
+
                         self.exportwindow.close()
+                        self.exportwindow = None   # otherwise the menu entry needs two clicks next time
                         return selected_names
 
 
@@ -597,7 +603,7 @@ class MainWindow(QtWidgets.QMainWindow):
             #     self.mailselectionprompt.show()
 
             def try_logging_in_f(user, pw):
-                print(f"try logging in IMAP server: {user} und pw: {pw}")
+                print(f"try logging in to IMAP server as {user}")
                 imap = imaplib.IMAP4_SSL(self.imap_server)
                 # # authenticate
                 imap.login(user, pw)
@@ -605,7 +611,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self.loginprompt = LoginPrompt(try_logging_in_f,title = "Email Login")
             self.loginprompt.show()
-            try_logging_in_f( self.config["my_mail"], self.config["my_mail_pw"])
+            try_logging_in_f( self.config.get("my_mail", ""), self.config.get("my_mail_pw", ""))
 
         def show_new_member():
             print(self.new_member.data)
@@ -854,7 +860,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 personswithinvoicesmasterdata = personswithinvoicesmasterdata[["Name 1","Name 2","E-Mail"]].drop_duplicates()
 
                 def try_logging_in_f(user, pw, host):
-                    print(f"try logging in IMAP server: {user} und pw: {pw}")
+                    print(f"try logging in to IMAP server as {user}")
                     try:
                         imap = imaplib.IMAP4_SSL(host)
                         # # authenticate
@@ -865,7 +871,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 # either do the login prompt and then execute the function or just execute the funciton
                 # self.loginprompt = LoginPrompt(try_logging_in_f, title="Email Login")
-                logged_in = try_logging_in_f(self.config["my_mail"], self.config["my_mail_pw"], self.config["imap_server"])
+                logged_in = try_logging_in_f(self.config.get("my_mail", ""), self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""))
                 if logged_in:
                     mailadressselection = MailAdressSelection(personswithinvoicesmasterdata["E-Mail"], title="Wähle die Personen aus, denen du eine Mail schreiben willst")
                     if mailadressselection.exec_():  # This blocks until dialog is closed
@@ -901,7 +907,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 nameinvoicefile = f"Rechnung_{self.thisinvoices_year}_q{self.thisinvoice_quart}_{receivername}.pdf"
 
                                 fpinvoicefile = os.path.join(self.safepath_this_invoices , nameinvoicefile)
-                                send_mail_to_one_person(self.config["my_mail"],self.config["my_mail_pw"], self.config["imap_server"],self.config["EEG_name"],email_this,person_data["Name 1"],
+                                send_mail_to_one_person(self.config.get("my_mail", ""),self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""),self.config.get("EEG_name", ""),email_this,person_data["Name 1"],
                                                         self.thisinvoice_quart, self.thisinvoices_year, self.emails.template, fpinvoicefile, masterdata)
 
 
@@ -910,8 +916,16 @@ class MainWindow(QtWidgets.QMainWindow):
                         print("Abort since nobody was selected")#
 
                 else:
+                    # Never echo the password here - this dialog is exactly what
+                    # a user screenshots when asking for help.
+                    mail_adresse = self.config.get("my_mail", "(nicht gesetzt)")
+                    mail_server = self.config.get("imap_server", "(nicht gesetzt)")
                     errorbox = QMessageBox()
-                    text = f"Anmeldung bei Mailserver nicht möglich mit Daten:\nMail Adresse: {self.config['my_mail']}, \nMail Passwort: {self.config['my_mail_pw']}, \nServer:{self.config['imap_server']}. \nCheck config file. "
+                    errorbox.setWindowTitle("Anmeldung fehlgeschlagen")
+                    text = ("Anmeldung beim Mailserver nicht möglich."
+                            f"\n\nMail Adresse: {mail_adresse}"
+                            f"\nServer: {mail_server}"
+                            "\n\nDas Passwort wurde abgelehnt. Bitte in den Einstellungen prüfen.")
                     for missing in datamissing:
                         text += f"\n- {missing}"
                     errorbox.setText(text)

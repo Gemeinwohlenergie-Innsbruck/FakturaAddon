@@ -88,18 +88,17 @@ def load_invoices(filepath='',nc = False):
 
 def load_invoice_template(filepath, nc = False):
     print(f"Load invoice template from {filepath}")
-    print(filepath)
-    if not nc:
-        try:
-            data = DocxTemplate(filepath)
-        except:
-            data = None
-            errorbox = QMessageBox()
-            errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
-            errorbox.exec_()
-    else:
-        print("Nextcloud loading")
-    return data
+    if not filepath:
+        return None
+    try:
+        return DocxTemplate(filepath)
+    except Exception as e:
+        print(f"Could not load invoice template: {e}")
+        errorbox = QMessageBox()
+        errorbox.setWindowTitle("Rechnungsvorlage")
+        errorbox.setText(f"Die Rechnungsvorlage konnte nicht geladen werden:\n{filepath}\n\n{e}")
+        errorbox.exec_()
+        return None
 
 def load_mail_adresses(filepath = '', nc = ''):
     print(f"Load Emaildata from {filepath}")
@@ -117,11 +116,22 @@ def load_mail_adresses(filepath = '', nc = ''):
     return data
 
 def load_mail_template(filepath = ''):
-    print("Email Template")
-    print(filepath)
-    env = Environment(loader=FileSystemLoader(os.path.dirname(filepath)), autoescape=select_autoescape())
-    template = env.get_template(os.path.basename(filepath))
-    return template
+    print(f"Load mail template from {filepath}")
+    if not filepath:
+        return None
+    try:
+        # abspath so a bare filename resolves against the working directory
+        # instead of handing FileSystemLoader an empty search path.
+        searchpath = os.path.dirname(os.path.abspath(filepath))
+        env = Environment(loader=FileSystemLoader(searchpath), autoescape=select_autoescape())
+        return env.get_template(os.path.basename(filepath))
+    except Exception as e:
+        print(f"Could not load mail template: {e}")
+        errorbox = QMessageBox()
+        errorbox.setWindowTitle("Emailvorlage")
+        errorbox.setText(f"Die Emailvorlage konnte nicht geladen werden:\n{filepath}\n\n{e}")
+        errorbox.exec_()
+        return None
 
 
 

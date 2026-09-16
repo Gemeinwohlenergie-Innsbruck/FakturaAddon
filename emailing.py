@@ -248,7 +248,6 @@ class LoginPrompt(QWidget):
             if self.pw.text():
                 pw = self.pw.text()
                 print("pw text eingegeben")
-                print(self.pw.text())
 
                 try:
 
