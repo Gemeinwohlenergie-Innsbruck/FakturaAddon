@@ -474,8 +474,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     #data check
 
                     self.exportwindow = Subwindow("Exportiere .csv für SEPA")
-                    self.exportwindow.resize(500, 100)
-                    self.exportwindow.move(30, 30)
+                    # Tall enough to show a useful number of rows; the scroll
+                    # area below handles the rest. No move() - a fixed position
+                    # can put the window off-screen.
+                    self.exportwindow.resize(620, 640)
                     self.exportwindow.tablegrid = QGridLayout()
                     self.exportwindow.tablegrid.setColumnStretch(0,1)
                     self.exportwindow.tablegrid.setColumnStretch(1,10)
@@ -638,16 +640,44 @@ class MainWindow(QtWidgets.QMainWindow):
                         return selected_names
 
 
+                    def set_all_checked(checked):
+                        for checkbox in self.exportwindow.list_data:
+                            checkbox.blockSignals(True)
+                            checkbox.setChecked(checked)
+                            checkbox.blockSignals(False)
+                        refresh_totals()
+
+                    select_all = QPushButton("Alle auswählen")
+                    select_none = QPushButton("Keine")
+                    select_all.clicked.connect(lambda: set_all_checked(True))
+                    select_none.clicked.connect(lambda: set_all_checked(False))
+                    selection_row = QHBoxLayout()
+                    selection_row.addWidget(select_all)
+                    selection_row.addWidget(select_none)
+                    selection_row.addStretch(1)
+                    selection_row.addWidget(QLabel(f"{len(names)} Positionen"))
+
                     self.exportwindow.ok_button = QPushButton("OK")
+                    self.exportwindow.ok_button.setDefault(True)
                     self.exportwindow.ok_button.pressed.connect(get_selected_names)
-                    self.exportwindow.overallverticallayout.addLayout(header_layout)
-                    self.exportwindow.overallverticallayout.addLayout(self.exportwindow.tablegrid)
-                    self.exportwindow.overallverticallayout.addLayout(self.exportwindow.totalsum)
 
-                    # self.exportwindow.overallverticallayout.addWidget(self.exportwindow.list_widget)
-                    self.exportwindow.overallverticallayout.addWidget(self.exportwindow.ok_button)
+                    # The checkbox grid goes in a scroll area. Added straight to
+                    # the layout, 120 members asked for a 3272px-tall window, so
+                    # the totals and the OK button sat below the bottom of the
+                    # screen with no way to reach them.
+                    rows_container = QWidget()
+                    rows_container.setLayout(self.exportwindow.tablegrid)
+                    scroll = QtWidgets.QScrollArea()
+                    scroll.setWidget(rows_container)
+                    scroll.setWidgetResizable(True)
+                    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-
+                    layout = self.exportwindow.overallverticallayout
+                    layout.addLayout(header_layout)
+                    layout.addWidget(scroll, 1)          # the only part that grows
+                    layout.addLayout(selection_row)
+                    layout.addLayout(self.exportwindow.totalsum)
+                    layout.addWidget(self.exportwindow.ok_button)
 
                     self.exportwindow.show()
                 else:
