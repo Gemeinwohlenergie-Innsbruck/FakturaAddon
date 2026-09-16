@@ -11,12 +11,15 @@ import os
 from subwindows import  Subwindow
 from PyQt5.QtCore import *
 from PyQt5 import QtWidgets, QtGui, QtCore
+from PyQt5.QtGui import QBrush, QColor
 import sys
 from PyQt5.QtWidgets import QLabel, QFileDialog, QMessageBox, QGridLayout, QTableWidget, QTableWidgetItem, QListWidget, QWidget, QListWidgetItem, QCheckBox, QListWidgetItem, QPushButton, QVBoxLayout, QDialog
 from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
 from selection import select_invoice_positions, members_with_invoices
 from config import ENV_PATH, load_env
+import validation
+from exporting import resolve_name_in_energydata
 from PyQt5.QtWidgets import QHBoxLayout
 import datetime as dt
 import imaplib
@@ -160,6 +163,81 @@ class FileLoadPanel(QtWidgets.QWidget):
 
     def path(self, key):
         return self._paths.get(key, "")
+
+
+class ValidationDialog(QDialog):
+    """Findings from the pre-flight checks, worst first."""
+
+    SEVERITY_LABEL = {validation.ERROR: "Fehler",
+                      validation.WARNING: "Warnung",
+                      validation.INFO: "Hinweis"}
+    SEVERITY_COLOUR = {validation.ERROR: "#a4283a",
+                       validation.WARNING: "#a6571f",
+                       validation.INFO: "#2f6fa8"}
+
+    def __init__(self, findings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Datenprüfung")
+        self.resize(760, 520)
+        self.findings = findings
+
+        layout = QVBoxLayout(self)
+        errors = sum(1 for f in findings if f.severity == validation.ERROR)
+        warnings = sum(1 for f in findings if f.severity == validation.WARNING)
+
+        summary = QLabel()
+        if not findings:
+            summary.setText("Keine Probleme gefunden.")
+        else:
+            parts = []
+            if errors:
+                parts.append(f"{errors} Fehler")
+            if warnings:
+                parts.append(f"{warnings} Warnung(en)")
+            rest = len(findings) - errors - warnings
+            if rest:
+                parts.append(f"{rest} Hinweis(e)")
+            summary.setText(" · ".join(parts))
+        summary.setStyleSheet("font-weight: 600; padding: 4px;")
+        layout.addWidget(summary)
+
+        tree = QtWidgets.QTreeWidget()
+        tree.setHeaderLabels(["", "Bereich", "Befund"])
+        tree.setColumnWidth(0, 80)
+        tree.setColumnWidth(1, 160)
+        for finding in findings:
+            item = QtWidgets.QTreeWidgetItem(
+                [self.SEVERITY_LABEL.get(finding.severity, finding.severity),
+                 finding.category, finding.message])
+            item.setForeground(0, QBrush(QColor(self.SEVERITY_COLOUR.get(finding.severity, "#333"))))
+            for row in finding.rows:
+                item.addChild(QtWidgets.QTreeWidgetItem(["", "", str(row)]))
+            # Expand short lists; a hundred names stays collapsed.
+            item.setExpanded(0 < len(finding.rows) <= 8)
+            tree.addTopLevelItem(item)
+        layout.addWidget(tree, 1)
+
+        buttons = QHBoxLayout()
+        copy_button = QPushButton("Bericht kopieren")
+        copy_button.clicked.connect(self.copy_report)
+        buttons.addWidget(copy_button)
+        buttons.addStretch(1)
+        close_button = QPushButton("Schließen")
+        close_button.setDefault(True)
+        close_button.clicked.connect(self.accept)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+    def report_text(self):
+        lines = []
+        for finding in self.findings:
+            lines.append(f"[{self.SEVERITY_LABEL.get(finding.severity, finding.severity)}] "
+                         f"{finding.category}: {finding.message}")
+            lines.extend(f"    - {row}" for row in finding.rows)
+        return "\n".join(lines) or "Keine Probleme gefunden."
+
+    def copy_report(self):
+        QtWidgets.QApplication.clipboard().setText(self.report_text())
 
 
 class WorkflowPanel(QtWidgets.QWidget):
@@ -378,7 +456,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # (key, title, optional) - the quarterly sequence, in order.
     WORKFLOW_STEPS = [
-        ("check_energy",    "Datenqualität prüfen",      True),
+        ("validate",        "Daten prüfen",              False),
+        ("check_energy",    "Energiequalität prüfen",    True),
         ("create_invoices", "Rechnungen erstellen",      False),
         ("send_mail",       "Rechnungen verschicken",    False),
         ("sepa_export",     "SEPA-Export für Infinity",  False),
@@ -393,6 +472,7 @@ class MainWindow(QtWidgets.QMainWindow):
         has_invoice_template = self.invoices.template is not None
         has_mail_template = self.emails.template is not None
         return {
+            "validate": [] if has_invoices else ["Rechnungsdaten"],
             "check_energy": [] if has_qov else ["Quartalsenergiedaten QoV"],
             # Energiedaten belongs here: produce_invoices_and_save dereferences
             # it unconditionally, so starting without it used to blow up inside
@@ -976,6 +1056,39 @@ class MainWindow(QtWidgets.QMainWindow):
                 creds = dlg.get_credentials()
                 print(creds)
 
+        def collect_findings():
+            return validation.validate(
+                invoices=self.invoices, masterdata=self.masterdata, energydata=self.energydata,
+                resolve_name=resolve_name_in_energydata,
+                members_with_invoices=members_with_invoices)
+
+        def run_validation():
+            findings = collect_findings()
+            ValidationDialog(findings, parent=self).exec_()
+            if not [f for f in findings if f.severity == validation.ERROR]:
+                self.mark_step_done("validate")
+
+        def confirm_despite_errors(title):
+            """Re-run the checks before an irreversible step and stop on errors.
+
+            Cheap - it is a handful of pandas passes - and it catches the two
+            mistakes that are otherwise invisible until the bank or a member
+            tells you: energy data from the wrong quarter, and debits with no
+            usable IBAN or mandate.
+            """
+            errors = [f for f in collect_findings() if f.severity == validation.ERROR]
+            if not errors:
+                return True
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle(title)
+            box.setText(f"Die Datenprüfung meldet {len(errors)} Fehler.")
+            box.setInformativeText("Trotzdem fortfahren?")
+            box.setDetailedText("\n".join(f"{f.category}: {f.message}" for f in errors))
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            box.setDefaultButton(QMessageBox.No)
+            return box.exec_() == QMessageBox.Yes
+
         def check_energydata():
             print("I check the energydata")
             check,datamissing = check_whether_data_exists(energydata= self.energydata,energymetadatarequired= True)
@@ -1069,6 +1182,8 @@ class MainWindow(QtWidgets.QMainWindow):
             #     errorbox.setText(text)
             #     errorbox.exec_()
             if check:
+                if not confirm_despite_errors("Rechnungen erstellen"):
+                    return
                 # first create a dict with all the info for the invoice, then render the template, then do it for all persons.
                 self.safepath_this_invoices = load_filepath(self, "Wo sollen die Rechnungen gespeichert werden?", pathisdir=True,homedir= self.home_directory)
                 if self.safepath_this_invoices is not None:
@@ -1212,6 +1327,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 # either do the login prompt and then execute the function or just execute the funciton
                 # self.loginprompt = LoginPrompt(try_logging_in_f, title="Email Login")
+                if not confirm_despite_errors("Rechnungen verschicken"):
+                    return
                 logged_in = try_logging_in_f(self.config.get("my_mail", ""), self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""))
                 if logged_in:
                     mailadressselection = MailAdressSelection(personswithinvoicesmasterdata["E-Mail"], title="Wähle die Personen aus, denen du eine Mail schreiben willst")
@@ -1322,7 +1439,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 #     # MailAdressSelection(self.emails, "An welche Mailadressen soll ich die Rechnungen schicken")
         # when we have api capabilities we can use this
         # ["Login in EEG Faktura", "", login_eeg_faktura],
-        menubardata = [["Überprüfe die Qualität der Energiedaten", "", check_energydata, "check_energy"],
+        menubardata = [["Daten prüfen", "", run_validation, "validate"],
+                       ["Überprüfe die Qualität der Energiedaten", "", check_energydata, "check_energy"],
                        ["Erstelle alle Rechnungen", "", create_invoices_and_save, "create_invoices"],
                        ["Verschicke die Rechnungen per Mail", "", send_invoices_mail, "send_mail"],
                        ["Einstellungen", "", change_Settings]]
