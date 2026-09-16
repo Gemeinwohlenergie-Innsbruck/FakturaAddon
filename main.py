@@ -166,6 +166,28 @@ class FileLoadPanel(QtWidgets.QWidget):
         return self._paths.get(key, "")
 
 
+def open_in_default_app(path):
+    """Open a file with whatever the OS uses for it. Returns True on success.
+
+    os.startfile exists only on Windows - on macOS it raises AttributeError,
+    which the old code caught and followed with a hardcoded `libreoffice`
+    call, a binary that is on PATH on neither macOS nor Windows. So the QoV
+    report saved correctly and then silently failed to open anywhere except
+    a Linux box with LibreOffice installed.
+    """
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)                          # noqa: S606 - Windows only
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return True
+    except Exception as e:
+        print(f"Could not open {path} automatically: {e}")
+        return False
+
+
 class ValidationDialog(QDialog):
     """Findings from the pre-flight checks, worst first."""
 
@@ -1200,13 +1222,11 @@ class MainWindow(QtWidgets.QMainWindow):
                         QMessageBox.critical(self, "Speichern fehlgeschlagen",
                                              f"Der Report konnte nicht gespeichert werden:\n{savepath}\n\n{e}")
                         return
-                    try:
-                        os.startfile(savepath)
-                    except Exception:
-                        try:
-                            subprocess.Popen(["libreoffice", savepath])
-                        except Exception as e:
-                            print(f"Could not open the report automatically: {e}")
+                    if not open_in_default_app(savepath):
+                        QMessageBox.information(
+                            self, "Report gespeichert",
+                            f"Der Überprüfungsreport wurde gespeichert:\n{savepath}\n\n"
+                            f"Er konnte nicht automatisch geöffnet werden.")
 
 
 

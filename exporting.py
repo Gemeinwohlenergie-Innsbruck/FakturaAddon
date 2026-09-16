@@ -4,6 +4,7 @@ import datetime as dt
 from docx2pdf import convert
 import numpy as np
 import subprocess
+import shutil
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter,MonthLocator
 import matplotlib
@@ -207,6 +208,24 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
 #personaldata =  masterdata.data.iloc[0]
 # invoicedata = invoices.data['detailed'][invoices.data['detailed']['Empfänger Name'] == fullname]
 #invoicetemplate = invoices.template_for_export
+
+def find_soffice():
+    """Locate the LibreOffice binary, or None.
+
+    `soffice` is on PATH only on Linux (and on Windows/macOS only if someone
+    put it there). Calling it bare meant the PDF fallback could not work on a
+    Mac even with LibreOffice installed.
+    """
+    found = shutil.which("soffice") or shutil.which("libreoffice")
+    if found:
+        return found
+    candidates = [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    ]
+    return next((path for path in candidates if os.path.exists(path)), None)
+
 
 def resolve_name_in_energydata(energydata, name):
     """Return the spelling of `name` used in the energy data columns, or None.
@@ -556,8 +575,13 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
                 convert(doc_path, pdf_path)
             except Exception as word_error:
                 print(f"Word conversion failed ({word_error}), trying LibreOffice")
+                soffice = find_soffice()
+                if soffice is None:
+                    print("No LibreOffice found either - install Word or LibreOffice "
+                          "to get PDFs instead of .docx")
+                    return None
                 try:
-                    subprocess.call(['soffice',
+                    subprocess.call([soffice,
                                      '--headless',
                                      '--convert-to',
                                      'pdf',
