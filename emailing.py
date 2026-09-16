@@ -59,10 +59,12 @@ class MailSelection(QWidget):
         self.email_list.itemDoubleClicked.connect(self.confirm_selection)
     def load_more_messages(self,dir = "down"):
         if dir == "down":
-            if self.start + self.nr_messagesperpage >= 0:
-                self.start = self.start + self.nr_messagesperpage
-                self.finish = self.finish + self.nr_messagesperpage
-            else: return
+            # Was `>= 0`, which is always true, so paging ran off the end of
+            # the mailbox into non-positive sequence numbers and an IMAP error.
+            if self.finish >= self.nr_messages:
+                return
+            self.start = self.start + self.nr_messagesperpage
+            self.finish = min(self.finish + self.nr_messagesperpage, self.nr_messages)
         if dir == "up":
             if self.start - self.nr_messagesperpage >= 0:
                 self.start = self.start - self.nr_messagesperpage

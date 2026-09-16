@@ -224,8 +224,12 @@ def resolve_name_in_energydata(energydata, name):
     return None
 
 
-def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,savedirfp,callback):
+def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,savedirfp,callback,
+                              should_cancel=None):
     """Render and save one invoice per member.
+
+    `callback(message, done, total)` drives the progress display.
+    `should_cancel()` is polled once per member so the user can stop a long run.
 
     Returns a list of human-readable problems. The caller owns the worker
     lifecycle - this function no longer signals completion itself, because the
@@ -239,8 +243,11 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
     nr_all_persons = invoicedata["Empfänger Name"].unique().shape[0]
     for index,name in enumerate(invoicedata["Empfänger Name"].unique()):
     # for index, name in enumerate(["Gerhard Halder"]):
+        if should_cancel is not None and should_cancel():
+            problems.append(f"Abgebrochen nach {index} von {nr_all_persons} Rechnungen.")
+            break
         print(f"({index+1}/{nr_all_persons}) Make invoice for {name}")
-        callback(f"({index+1}/{nr_all_persons}) Ich mache die Rechnung für {name}...")
+        callback(f"({index+1}/{nr_all_persons}) Rechnung für {name}...", index, nr_all_persons)
         invoicethis = invoicedata[invoicedata["Empfänger Name"] == name]
         debits_this =  debit[debit["Empfänger Name"] == name]
         transfers_this = transfer[transfer["Empfänger Name"] == name]

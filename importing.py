@@ -36,7 +36,7 @@ class Data():
 #             mandates = pd.read_excel(filepath)
 #         except:
 #             errorbox = QMessageBox()
-#             errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
+#             errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
 #             errorbox.exec_()
 #             return
 #     else:
@@ -51,7 +51,7 @@ class Data():
 #         mandates = mandates.rename(columns={'Vorname (gleich wie in eegfaktura)': 'Vorname', 'Nachname (gleich wie in eegfaktura)': 'Nachname','Mitgliedsnummer aus eegfaktura ist auch die Mandatsreferenz':'Mitgliedsnummer'})
 #     except:
 #         errorbox = QMessageBox()
-#         errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
+#         errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
 #         errorbox.exec_()
 #         return
 #     return mandates
@@ -73,7 +73,8 @@ def load_invoices(filepath='',nc = False):
             data = None
             datadetailed = None
             errorbox = QMessageBox()
-            errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle("Datei nicht lesbar")
+            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
             errorbox.exec_()
     else:
         print("Nextcloud loading")
@@ -109,7 +110,8 @@ def load_mail_adresses(filepath = '', nc = ''):
             print(e)
             data = None
             errorbox = QMessageBox()
-            errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle("Datei nicht lesbar")
+            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
             errorbox.exec_()
     else:
         print("Nextcloud loading (not implemented)")
@@ -150,7 +152,8 @@ def load_energy_qovdata(filepath = "", nc = False):
         except Exception as e:
             print(e)
             errorbox = QMessageBox()
-            errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle("Datei nicht lesbar")
+            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
             errorbox.exec_()
             return
     else:
@@ -201,7 +204,7 @@ def load_energy_data(filepath = "", nc = False, qov = False):
                 self.error = None
 
             def run(self):
-                self.progress.emit("Loading Excel file...")
+                self.progress.emit("Excel-Datei wird geladen...")
                 try:
                     if self.qov:
                         data = pd.read_excel(self.filepath, sheet_name="QoV Log", skiprows=[7, 8, 9], header=[1, 2, 3, 6],
@@ -252,7 +255,8 @@ def load_faktura_member_export_template(filepath = "",nc =False, nc_instance = '
             print(template)
         except:
             errorbox = QMessageBox()
-            errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle("Datei nicht lesbar")
+            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
             errorbox.exec_()
             return
     else:
@@ -290,7 +294,8 @@ def load_masterdata(filepath, nc = False):
             print(e)
             data = None
             errorbox = QMessageBox()
-            errorbox.setText("Ausgewählte Date ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle("Datei nicht lesbar")
+            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
             errorbox.exec_()
     else:
         print("Nextcloud loading (not implemented)")
@@ -421,7 +426,7 @@ def fetch_community_metadata(community_id: str, tenant: str, user: str, password
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Sign In")
+        self.setWindowTitle("Anmelden")
         self.setFixedWidth(700)
 
         layout = QVBoxLayout(self)
@@ -433,10 +438,10 @@ class LoginDialog(QDialog):
         self.edit_community_id = QLineEdit()
         self.edit_password.setEchoMode(QLineEdit.Password)
 
-        form.addRow("User:", self.edit_user)
-        form.addRow("Password:", self.edit_password)
-        form.addRow("Tenant:", self.edit_tenant)
-        form.addRow("Community ID:", self.edit_community_id)
+        form.addRow("Benutzername:", self.edit_user)
+        form.addRow("Passwort:", self.edit_password)
+        form.addRow("Mandant:", self.edit_tenant)
+        form.addRow("Gemeinschafts-ID:", self.edit_community_id)
         layout.addLayout(form)
 
         for field in (self.edit_user, self.edit_password,
@@ -466,7 +471,7 @@ class LoginDialog(QDialog):
             self.edit_tenant.text().strip(),
             self.edit_community_id.text().strip(),
         ]):
-            self.error_label.setText("All fields are required.")
+            self.error_label.setText("Alle Felder sind erforderlich.")
             self.error_label.setVisible(True)
             return
         self.error_label.setVisible(False)
@@ -483,12 +488,12 @@ class LoginDialog(QDialog):
 
         except requests.HTTPError as exc:
             self.error_label.setText(
-                f"HTTP {exc.response.status_code} — check your credentials or community ID"
+                f"HTTP {exc.response.status_code} — bitte Zugangsdaten und Gemeinschafts-ID prüfen"
             )
             self.error_label.setVisible(True)
             return
         except requests.RequestException as exc:
-            self.error_label.setText(f"Network error: {exc}")
+            self.error_label.setText(f"Netzwerkfehler: {exc}")
             self.error_label.setVisible(True)
             return
 
@@ -510,7 +515,7 @@ class LoginDialog(QDialog):
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle("Einstellungen")
         self.setFixedWidth(700)
 
         layout = QVBoxLayout(self)
@@ -526,7 +531,7 @@ class SettingsDialog(QDialog):
         # Home directory with browse button
         dir_row = QHBoxLayout()
         self.edit_home_directory = QLineEdit()
-        browse_btn = QPushButton("Browse…")
+        browse_btn = QPushButton("Durchsuchen…")
         browse_btn.clicked.connect(self._browse_directory)
         dir_row.addWidget(self.edit_home_directory)
         dir_row.addWidget(browse_btn)
@@ -534,28 +539,28 @@ class SettingsDialog(QDialog):
         # Template fields with browse buttons
         self.edit_template_invoice = QLineEdit("template_invoice_clean.docx")
         invoice_row = QHBoxLayout()
-        invoice_browse = QPushButton("Browse…")
+        invoice_browse = QPushButton("Durchsuchen…")
         invoice_browse.clicked.connect(lambda: self._browse_file(self.edit_template_invoice, "Word Documents (*.docx)"))
         invoice_row.addWidget(self.edit_template_invoice)
         invoice_row.addWidget(invoice_browse)
 
         self.edit_template_email = QLineEdit("email_template.html")
         email_row = QHBoxLayout()
-        email_browse = QPushButton("Browse…")
+        email_browse = QPushButton("Durchsuchen…")
         email_browse.clicked.connect(lambda: self._browse_file(self.edit_template_email, "HTML Files (*.html)"))
         email_row.addWidget(self.edit_template_email)
         email_row.addWidget(email_browse)
 
-        form.addRow("Mail address:", self.edit_my_mail)
-        form.addRow("IMAP server:", self.edit_imap_server)
-        form.addRow("Mail password:", self.edit_my_mail_pw)
-        form.addRow("Home directory:", dir_row)
-        form.addRow("EEG name:", self.edit_eeg_name)
-        form.addRow("Invoice template:", invoice_row)
-        form.addRow("Email template:", email_row)
+        form.addRow("Mailadresse:", self.edit_my_mail)
+        form.addRow("IMAP-Server:", self.edit_imap_server)
+        form.addRow("Mail-Passwort:", self.edit_my_mail_pw)
+        form.addRow("Basisordner:", dir_row)
+        form.addRow("Name der EEG:", self.edit_eeg_name)
+        form.addRow("Rechnungsvorlage:", invoice_row)
+        form.addRow("Emailvorlage:", email_row)
         layout.addLayout(form)
 
-        note = QLabel("All fields are optional.")
+        note = QLabel("Alle Felder sind optional.")
         layout.addWidget(note)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -582,13 +587,13 @@ class SettingsDialog(QDialog):
             self.edit_template_email.setText(saved["template_email"])
 
     def _browse_directory(self):
-        path = QFileDialog.getExistingDirectory(self, "Select home directory",
+        path = QFileDialog.getExistingDirectory(self, "Basisordner auswählen",
                                                 self.edit_home_directory.text() or str(Path.home()))
         if path:
             self.edit_home_directory.setText(path)
 
     def _browse_file(self, edit: QLineEdit, file_filter: str):
-        path, _ = QFileDialog.getOpenFileName(self, "Select file",
+        path, _ = QFileDialog.getOpenFileName(self, "Datei auswählen",
                                               self.edit_home_directory.text() or str(Path.home()),
                                               file_filter)
         if path:

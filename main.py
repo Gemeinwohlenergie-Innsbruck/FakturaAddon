@@ -1,6 +1,7 @@
 import datetime
 import subprocess
 import traceback
+import threading
 import numpy as np
 import json
 from functools import partial
@@ -37,10 +38,23 @@ class TableView(QtWidgets.QTableWidget):
         self.resizeRowsToContents()
         if clickable:
             self.itemClicked.connect(self.on_item_clicked)
-    def set_new_data(self,data, editable = False, maxrows = 50):
-        datacopy = data.copy().iloc[0:maxrows]
+    def set_new_data(self,data, editable = False, maxrows = 200):
+        # Slice first, then copy - copying the whole frame to keep 200 rows is
+        # wasted work on a big energy export.
+        datacopy = data.iloc[0:maxrows].copy()
         self.data = datacopy.to_dict(orient="list")
         self.setData(datacopy.shape[0],datacopy.shape[1], editable= editable)
+        hidden = data.shape[0] - datacopy.shape[0]
+        if hidden > 0:
+            # Truncating in silence reads as "those members are missing from
+            # the import". Say it out loud in a final row.
+            self.insertRow(self.rowCount())
+            note = QtWidgets.QTableWidgetItem(
+                f"… {hidden} weitere Zeilen nicht angezeigt ({data.shape[0]} gesamt)")
+            note.setFlags(note.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
+            self.setItem(self.rowCount() - 1, 0, note)
+            if self.columnCount() > 1:
+                self.setSpan(self.rowCount() - 1, 0, 1, self.columnCount())
     def setData(self,rowcount = 0, colcount = 0, editable = False):
         self.setColumnCount(colcount)
         self.setRowCount(rowcount)
@@ -94,13 +108,68 @@ class TableView(QtWidgets.QTableWidget):
 #             foo_dir = dialog.getExistingDirectory(self, 'Select an awesome directory')
 #         buttons[0].pressed.connect()
 
+class FileLoadPanel(QtWidgets.QWidget):
+    """The 'Dateien geladen' list, as a form with real buttons.
+
+    This used to be a QTableWidget whose rows happened to respond to clicks -
+    no button, no cursor change, no tooltip, so there was nothing to tell the
+    user that clicking a row was how you loaded a file.
+    """
+
+    def __init__(self, rows, parent=None):
+        super().__init__(parent)
+        self._paths = {}
+        self._status = {}
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 0)
+        self._buttons = {}
+        for row, (key, label) in enumerate(rows):
+            name = QLabel(label)
+            status = QLabel("nicht geladen")
+            status.setStyleSheet("color: palette(mid);")
+            status.setWordWrap(False)
+            status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            button = QPushButton("Durchsuchen…")
+            button.setToolTip(f"{label} auswählen und laden")
+            grid.addWidget(name, row, 0)
+            grid.addWidget(status, row, 1)
+            grid.addWidget(button, row, 2)
+            self._status[key] = status
+            self._buttons[key] = button
+        grid.setRowStretch(len(rows), 1)
+
+    def set_handler(self, key, handler):
+        self._buttons[key].clicked.connect(handler)
+
+    def set_path(self, key, path):
+        """Show a loaded file by name, with the full path on hover."""
+        self._paths[key] = path
+        label = self._status[key]
+        if path:
+            label.setText(f"✓ {os.path.basename(path)}")
+            label.setToolTip(path)
+            label.setStyleSheet("color: palette(text);")
+        else:
+            label.setText("nicht geladen")
+            label.setToolTip("")
+            label.setStyleSheet("color: palette(mid);")
+
+    def path(self, key):
+        return self._paths.get(key, "")
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
         print("Initializing Window")
         self.setWindowTitle("Faktura Infinity Addon")
+        # Default size only; restore_geometry() overrides it with the size and
+        # position the window was last closed at. No move() - a hardcoded
+        # position can land the window off-screen on a smaller display.
         self.resize(1300, 800)
-        self.move(20, 20)
         self.second_window = None
         self.exportwindow = None
 
@@ -118,10 +187,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.config = load_env()
 
         self.home_directory = self.config.get("home_directory", "")
-        paths_datanames = ["Rechnungsdaten","EEG Faktura Stammdaten","EEG Faktura Quartalsenergiedaten","EEG Faktura Quartalsenergiedaten QOV","Rechnungen Vorlage", "Emails Vorlage"]
-        self.loaded_filepaths = pd.DataFrame({"Daten":paths_datanames,
-                                  "Speicherort":["Auswählen"]*len(paths_datanames),
-                                              })
         # promptwindows
 
         self.loginprompt = None
@@ -142,62 +207,51 @@ class MainWindow(QtWidgets.QMainWindow):
         self.init_Ui()
 
 
+    def _build_menu(self, menubar, title, entries):
+        menu = menubar.addMenu(title)
+        for label, shortcut, handler in entries:
+            action = QtWidgets.QAction(label, self)
+            action.triggered.connect(handler)
+            if shortcut:
+                action.setShortcut(shortcut)
+            menu.addAction(action)
+        return menu
+
     def init_Ui(self):
         self.centralwidget = QtWidgets.QWidget(self)
-        self.centralwidget = QtWidgets.QWidget(self)
         self.overallverticallayout = QtWidgets.QVBoxLayout(self.centralwidget)
-        menubar = QtWidgets.QMenuBar()
-        self.menubardata_Make_invoices= self.init_menubardata_make_invoices()
+
+        # self.menuBar(), not a QMenuBar dropped into a layout: a menu bar
+        # parked in a layout is not the window's menu bar, sizes oddly, and
+        # never reaches the macOS menu bar.
+        menubar = self.menuBar()
+        self.menubardata_Make_invoices = self.init_menubardata_make_invoices()
         if self.menubardata_Make_invoices:
-            self.actionFile = menubar.addMenu("Rechnungen erstellen und verschicken")
-            for menuline in self.menubardata_Make_invoices:
-                action = QtWidgets.QAction(menuline[0], self)
-                action.triggered.connect(menuline[2])
-                if menuline[1]:
-                    action.setShortcut(menuline[1])
-                self.actionFile.addAction(action)
-        self.menubardata_Infinity= self.init_menubardata_Infinity()
+            self._build_menu(menubar, "Rechnungen erstellen und verschicken",
+                             self.menubardata_Make_invoices)
+        self.menubardata_Infinity = self.init_menubardata_Infinity()
         if self.menubardata_Infinity:
-            self.actionFile = menubar.addMenu("Infinity export")
-            for menuline in self.menubardata_Infinity:
-                action = QtWidgets.QAction(menuline[0], self)
-                action.triggered.connect(menuline[2])
-                if menuline[1]:
-                    action.setShortcut(menuline[1])
-                self.actionFile.addAction(action)
-            self.actionFile.addSeparator()
-            quit = QtWidgets.QAction("Schließen", self)
-            quit.setShortcut("Alt+F4")
-            quit.triggered.connect(lambda: sys.exit(0))
-            self.actionFile.addAction(quit)
+            infinity_menu = self._build_menu(menubar, "Infinity Export", self.menubardata_Infinity)
+            infinity_menu.addSeparator()
+            close_action = QtWidgets.QAction("Schließen", self)
+            close_action.setShortcut(QtGui.QKeySequence.Quit)
+            # close(), not sys.exit(0): lets closeEvent save the geometry and
+            # gives Qt a chance to shut down cleanly.
+            close_action.triggered.connect(self.close)
+            infinity_menu.addAction(close_action)
 
-        # self.menubardata_New_member= self.init_menubardata_new_member()
-        # if self.menubardata_New_member:
-        #     self.actionFile = menubar.addMenu("Neues Mitglied onbording")
-        #     for menuline in self.menubardata_New_member:
-        #         action = QtWidgets.QAction(menuline[0], self)
-        #         action.triggered.connect(menuline[2])
-        #         if menuline[1]:
-        #             action.setShortcut(menuline[1])
-        #         self.actionFile.addAction(action)
-
-
-
-
-
-        self.overallverticallayout.addWidget(menubar)
+        self.status_header = QLabel()
+        self.status_header.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.overallverticallayout.addWidget(self.status_header)
 
         self.horizontalLayout = QtWidgets.QHBoxLayout()
-        self.verticalLayout0 = QtWidgets.QVBoxLayout() 
-        self.verticalLayout1 = QtWidgets.QVBoxLayout()
-        self.horizontalLayout = QtWidgets.QHBoxLayout()
-        self.verticalLayout0 = QtWidgets.QVBoxLayout()  # layout on the left with the masslist, and other stuff
-        self.verticalLayout1 = QtWidgets.QVBoxLayout()  # laout on the right with the graph
+        self.verticalLayout0 = QtWidgets.QVBoxLayout()  # left: consumer data
+        self.verticalLayout1 = QtWidgets.QVBoxLayout()  # right: producer data and files
         self.table_0_0 = TableView()
         self.table_0_1 = TableView()
         self.table_1_0 = TableView()
-        self.table_1_1 = TableView(self.loaded_filepaths,clickable=True)
-        self.init_loading_functionality(self.table_1_1)
+        self.filepanel = FileLoadPanel(self.FILE_ROWS)
+        self.init_loading_functionality(self.filepanel)
 
         self.horizontalLayout.addLayout(self.verticalLayout1)
         self.horizontalLayout.addLayout(self.verticalLayout0)
@@ -210,17 +264,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.verticalLayout1.addWidget(QLabel("Rechnungsdaten ProduzentInnen"))
         self.verticalLayout1.addWidget(self.table_1_0)
-        self.verticalLayout1.addWidget(QLabel("Dateien geladen:"))
-        self.verticalLayout1.addWidget(self.table_1_1)
+        self.verticalLayout1.addWidget(QLabel("Dateien laden"))
+        self.verticalLayout1.addWidget(self.filepanel)
         self.verticalLayout1.setStretch(1, 7)
         self.verticalLayout1.setStretch(3, 4)
 
         self.overallverticallayout.addLayout(self.horizontalLayout)
-
-
-
-        self.overallverticallayout.addLayout(self.horizontalLayout)
         self.setCentralWidget(self.centralwidget)
+        self.update_status_header()
+        self.restore_geometry()
+
+    def restore_geometry(self):
+        """Reopen where the user left the window.
+
+        The hardcoded resize(1300, 800) / move(20, 20) could place the window
+        partly off a 1366x768 laptop screen.
+        """
+        geometry = QSettings().value("window/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+
+    def closeEvent(self, event):
+        QSettings().setValue("window/geometry", self.saveGeometry())
+        super().closeEvent(event)
 
     def init_data(self):
         #self.mandates = mandates
@@ -265,164 +331,137 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec_()
 
 
-    def init_loading_functionality(self,table_widget_in_which_loading_is_done):
+    # (key, label) for each loadable file, in display order.
+    FILE_ROWS = [
+        ("invoices",         "Rechnungsdaten"),
+        ("masterdata",       "EEG Faktura Stammdaten"),
+        ("energy",           "Quartalsenergiedaten"),
+        ("energy_qov",       "Quartalsenergiedaten QoV"),
+        ("invoice_template", "Rechnungen Vorlage"),
+        ("email_template",   "Emails Vorlage"),
+    ]
 
-        def updatetable_1_1():
-            table_widget_in_which_loading_is_done.set_new_data(self.loaded_filepaths)
+    def init_loading_functionality(self, panel):
 
         def import_invoice_data():
             print("import invoice data")
-            filepath = load_filepath(self,"Importiere Rechnungen von EEG Faktura",homedir= self.home_directory)
-            if filepath is not None:
-                self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][self.loaded_filepaths["Daten"] == "Rechnungsdaten"].index, "Speicherort"] = filepath
+            filepath = load_filepath(self, "Importiere Rechnungen von EEG Faktura", homedir=self.home_directory)
+            if filepath is None:
+                return
+            invoicedata = self.invoices.load_data(filepath=filepath)
+            if invoicedata is None:
+                return
+            invoicequart = invoicedata["detailed"]["Abrechnung"].iloc[0]
+            self.thisinvoices_year = invoicequart.split("-")[-2]
+            self.thisinvoice_quart = invoicequart.split("-")[-1]
+            debit = invoicedata["list"][(invoicedata["list"]["Dokumenttyp"] == "Rechnung")]
+            transfer = invoicedata["list"][(invoicedata["list"]["Dokumenttyp"] == "Gutschrift")|(invoicedata["list"]["Dokumenttyp"] == "Information")]
 
-
-                invoicedata= self.invoices.load_data(filepath=filepath)
-                if invoicedata is not None:
-                    invoicequart = invoicedata["detailed"]["Abrechnung"].iloc[0]
-                    invoices_year, invoices_quart = invoicequart.split("-")[-2], invoicequart.split("-")[-1]
-                    self.thisinvoices_year = invoices_year
-                    self.thisinvoice_quart = invoices_quart
-                    debit = invoicedata["list"][(invoicedata["list"]["Dokumenttyp"] == "Rechnung")]
-                    transfer = invoicedata["list"][(invoicedata["list"]["Dokumenttyp"] == "Gutschrift")|(invoicedata["list"]["Dokumenttyp"] == "Information")]
-
-                    self.reload_table_view("0_0",debit)
-                    self.reload_table_view("1_0",transfer)
-
-                    updatetable_1_1()
-                    self.invoicesdata_loaded = True
-                else:
-                    print()
-
-        def load_faktura_new_member_export_template():
-            def load_faktura_template(filepath, nc_loading=False, nc_instance=""):
-                if filepath is not None:
-                    new_memberdata = self.new_member.load_template(filepath=filepath, nc=nc_loading, nc_instance=nc_instance)
-                    if new_memberdata is not None:
-                        self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
-                            self.loaded_filepaths["Daten"] == "Vorlage EEG Faktura Stammdaten Export"].index, "Speicherort"] = filepath
-                        self.new_membersdata_loaded = True
-                        # self.table_1_1.set_new_data(self.loaded_filepaths.iloc[0:3])
-                        updatetable_1_1()
-                else:
-                    return None
-            filepath=""
-            if not filepath:
-                print("Load faktura_new_member_export_template")
-                dlg = QMessageBox(self)
-                questiontext = f"Ich kann die die Vorlage zu Faktura Export von folgendem Pfad herunteladen:"
-                questiontext += f"\n\n{self.nc_faktura_export_template_fp}"
-                questiontext += "\n\nSoll ich es von diesem Pfad herunterladen, oder willst du lokal eine Datei von deinem Computer auswählen?"
-                dlg.setText(questiontext)
-                dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-                prompt = dlg.exec()
-
-
-                if prompt == QMessageBox.Yes:
-                    pass
-
-                else:
-                    filepath = load_filepath(self,"Lade Vorlage zu Faktura Export",homedir= self.home_directory)
-                    load_faktura_template(filepath = filepath)
-            else:
-                load_faktura_template(filepath = filepath)
+            self.reload_table_view("0_0", debit)
+            self.reload_table_view("1_0", transfer)
+            panel.set_path("invoices", filepath)
+            self.invoicesdata_loaded = True
+            self.update_status_header()
 
         def load_template_invoice_from_fp(filepath):
-            if filepath:
-                invoices_template = self.invoices.load_template(filepath=filepath)
-                if invoices_template is not None:
-                    self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
-                        self.loaded_filepaths["Daten"] == "Rechnungen Vorlage"].index, "Speicherort"] = filepath
-                    updatetable_1_1()
-            else:
-                return None
+            if not filepath:
+                return
+            if self.invoices.load_template(filepath=filepath) is not None:
+                panel.set_path("invoice_template", filepath)
+                self.update_status_header()
 
         def select_template_invoice():
-            print("Select template invoice export")
-            filepath = load_filepath(self,"Wähle das Template für Rechnungen aus", filter="Word Document (*.docx)",homedir= self.home_directory)
+            filepath = load_filepath(self, "Wähle die Vorlage für die Rechnungen aus",
+                                     filter="Word Dokument (*.docx)", homedir=self.home_directory)
             if filepath is not None:
                 load_template_invoice_from_fp(filepath)
 
         def loadp_masterdata_from_fp(filepath):
-            if filepath is not None:
-                masterdata = self.masterdata.load_data(filepath=filepath)
-                masterdata_meta = self.masterdata.load_metadata(filepath=filepath)
-                mailadresses = self.emails.load_data(filepath=filepath)
-                if masterdata is not None:
-                    self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
-                        self.loaded_filepaths[
-                            "Daten"] == "EEG Faktura Stammdaten"].index, "Speicherort"] = filepath
-                    updatetable_1_1()
-            else:
-                return None
+            if not filepath:
+                return
+            loaded = self.masterdata.load_data(filepath=filepath)
+            self.masterdata.load_metadata(filepath=filepath)
+            self.emails.load_data(filepath=filepath)
+            if loaded is not None:
+                panel.set_path("masterdata", filepath)
+                self.update_status_header()
 
         def import_masterdata_data():
-            print("Import the data on every person out of EEG faktura")
-            filepath = load_filepath(self,"Wähle die Masterdaten von Faktura aus.",homedir= self.home_directory)
+            filepath = load_filepath(self, "Wähle die Stammdaten von EEG Faktura aus", homedir=self.home_directory)
             if filepath is not None:
                 loadp_masterdata_from_fp(filepath)
 
-        def load_energydata_fp(filepath, load_qov = False):
-            if filepath is not None:
-                energydata = None
-                energydataqov = None
-                if load_qov:
-                    energydataqov = self.energydata.load_metadata(filepath=filepath)
-                else:
-                    energydata = self.energydata.load_data(filepath=filepath)
-
-                if (energydata is not None) or (energydataqov is not None):
-                    if load_qov:
-                        self.reload_table_view("0_1", energydataqov)
-                        self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
-                            self.loaded_filepaths["Daten"] == "EEG Faktura Quartalsenergiedaten QOV"].index, "Speicherort"] = filepath
-                    else:
-                        self.reload_table_view("0_1", energydata)
-                        self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
-                            self.loaded_filepaths["Daten"] == "EEG Faktura Quartalsenergiedaten"].index, "Speicherort"] = filepath
-
-                    updatetable_1_1()
+        def load_energydata_fp(filepath, load_qov=False):
+            if not filepath:
+                return
+            if load_qov:
+                loaded = self.energydata.load_metadata(filepath=filepath)
+                key = "energy_qov"
             else:
-                return None
+                loaded = self.energydata.load_data(filepath=filepath)
+                key = "energy"
+            if loaded is not None:
+                self.reload_table_view("0_1", loaded)
+                panel.set_path(key, filepath)
+                self.update_status_header()
 
-        def import_energy_data(load_qov = False):
-            print("Import the energydata out of EEG faktura")
-            filepath = load_filepath(self,"Wähle die Energiedaten für diese Quartal aus",homedir= self.home_directory)
+        def import_energy_data(load_qov=False):
+            title = ("Wähle die QoV-Energiedaten für dieses Quartal aus" if load_qov
+                     else "Wähle die Energiedaten für dieses Quartal aus")
+            filepath = load_filepath(self, title, homedir=self.home_directory)
             if filepath is not None:
-                load_energydata_fp(filepath, load_qov = load_qov)
+                load_energydata_fp(filepath, load_qov=load_qov)
 
         def load_emaildata_fp(filepath):
-            if filepath:
-                email_temp = self.emails.load_template(filepath=filepath)
-                if email_temp is not None:
-                    self.loaded_filepaths.loc[self.loaded_filepaths["Daten"][
-                        self.loaded_filepaths["Daten"] == "Emails Vorlage"].index, "Speicherort"] = filepath
-                    updatetable_1_1()
-            else:
-                return None
+            if not filepath:
+                return
+            if self.emails.load_template(filepath=filepath) is not None:
+                panel.set_path("email_template", filepath)
+                self.update_status_header()
 
         def import_email_template():
-            print("Import the email template ")
-            filepath = load_filepath(self,"Wähle die Emailvorlage aus.",filter ="Docx (*.docx)",homedir= self.home_directory)
+            # Was filtered on *.docx, but the email template is HTML.
+            filepath = load_filepath(self, "Wähle die Emailvorlage aus",
+                                     filter="HTML Datei (*.html *.htm)", homedir=self.home_directory)
             if filepath is not None:
                 load_emaildata_fp(filepath)
 
-
-        allfunctions = [import_invoice_data, import_masterdata_data,import_energy_data,partial(import_energy_data,load_qov = True), select_template_invoice,import_email_template]
-
-        for index,function in enumerate(allfunctions):
-            table_widget_in_which_loading_is_done.functions_on_row_clicked[index] = function
+        handlers = {
+            "invoices":         import_invoice_data,
+            "masterdata":       import_masterdata_data,
+            "energy":           import_energy_data,
+            "energy_qov":       partial(import_energy_data, load_qov=True),
+            "invoice_template": select_template_invoice,
+            "email_template":   import_email_template,
+        }
+        for key, handler in handlers.items():
+            panel.set_handler(key, handler)
 
         # Auto-load the templates named in .env. Both loaders return early on an
         # empty path, so an install with no templates configured still starts.
         load_template_invoice_from_fp(self.config.get("template_export_invoice", ""))
         load_emaildata_fp(self.config.get("template_email", ""))
 
+    def update_status_header(self):
+        """One line saying which quarter is loaded and how much of it.
 
-        # loadp_masterdata_from_fp(self.loaded_filepaths.loc[self.loaded_filepaths["Daten"] == "EEG Faktura Stammdaten","Speicherort"].iloc[0])
-        # print("loaded masterdata")
+        Running a quarter twice, or generating invoices against last quarter's
+        energy data, was previously invisible until the PDFs came out wrong.
+        """
+        if not self.invoicesdata_loaded or self.invoices.data is None:
+            self.status_header.setText("Keine Rechnungsdaten geladen - "
+                                       "zuerst rechts eine Datei laden.")
+            self.status_header.setStyleSheet("color: palette(mid); padding: 4px;")
+            return
+        invoice_list = self.invoices.data["list"]
+        n_debit = int((invoice_list["Dokumenttyp"] == "Rechnung").sum())
+        n_credit = len(invoice_list) - n_debit
+        energy = "Energiedaten geladen" if self.energydata.data is not None else "keine Energiedaten"
+        self.status_header.setText(
+            f"Abrechnung {self.thisinvoices_year} Q{self.thisinvoice_quart}  ·  "
+            f"{n_debit} Rechnungen, {n_credit} Gutschriften  ·  {energy}")
+        self.status_header.setStyleSheet("font-weight: 600; padding: 4px;")
 
-    
     def init_menubardata_Infinity(self):
 
         def export_csv():
@@ -481,21 +520,53 @@ class MainWindow(QtWidgets.QMainWindow):
                     #         mandatesexist.append("x")
                     #     else: mandatesexist.append("")
 
+                    amount_labels = []
                     for index,(name,amount) in enumerate(zip(names,amounts)):
                         index += 1
                         checkbox = QCheckBox()
                         checkbox.setChecked(True)
                         col1 = QLabel(str(name))
-                        col2 = QLabel(str(amount))
+                        col2 = QLabel(f"{amount:.2f}")
+                        col2.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
                         self.exportwindow.tablegrid.addWidget(checkbox,index,0)
                         self.exportwindow.tablegrid.addWidget(col1,index,1)
                         self.exportwindow.tablegrid.addWidget(col2,index,2)
 
                         self.exportwindow.list_data.append(checkbox)
-                    totalsum = np.array(amounts).sum()
-                    self.exportwindow.totalsum.addWidget(QLabel("Gesamt"),0,1)
-                    self.exportwindow.totalsum.addWidget(QLabel(f"€ {totalsum:.2f}"),0,2)
+                        amount_labels.append(amount)
+
+                    # One signed "Gesamt" hid whether money was going out or
+                    # coming in. Debits and credits are separate operations at
+                    # the bank, so show them separately.
+                    label_debit = QLabel()
+                    label_credit = QLabel()
+                    label_net = QLabel()
+                    for row, (caption, widget) in enumerate([
+                            ("Lastschriften (Einzug)", label_debit),
+                            ("Überweisungen (Gutschrift)", label_credit),
+                            ("Netto", label_net)]):
+                        caption_label = QLabel(caption)
+                        if caption == "Netto":
+                            caption_label.setStyleSheet("font-weight: 600;")
+                            widget.setStyleSheet("font-weight: 600;")
+                        widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                        self.exportwindow.totalsum.addWidget(caption_label, row, 1)
+                        self.exportwindow.totalsum.addWidget(widget, row, 2)
+
+                    def refresh_totals():
+                        """Keep the totals honest as boxes are ticked and unticked."""
+                        selected = [a for a, cb in zip(amount_labels, self.exportwindow.list_data)
+                                    if cb.isChecked()]
+                        debit_sum = -sum(a for a in selected if a < 0)   # stored negative
+                        credit_sum = sum(a for a in selected if a > 0)
+                        label_debit.setText(f"€ {debit_sum:.2f}")
+                        label_credit.setText(f"€ {credit_sum:.2f}")
+                        label_net.setText(f"€ {credit_sum - debit_sum:.2f}")
+
+                    for checkbox in self.exportwindow.list_data:
+                        checkbox.stateChanged.connect(lambda _: refresh_totals())
+                    refresh_totals()
 
                     # print(self.exportwindow.tablegrid.rowCount())
                     # for i in range(0,self.exportwindow.tablegrid.rowCount()):
@@ -606,7 +677,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reload_table_view = reload_table_view
 
         menubardata = [
-                            ["Exportiere .csv Datei für Raiffeisen Infinty", "", export_csv]]
+                            ["Exportiere .csv Datei für Raiffeisen Infinity", "", export_csv]]
         # ["Importiere Rechnungdaten von EEG Faktura", "", import_invoice_data],
         # ["Lade Daten von SEPA Mandate", "", import_mandates],
         return menubardata
@@ -828,12 +899,14 @@ class MainWindow(QtWidgets.QMainWindow):
             #     errorbox.exec_()
             if check:
                 # first create a dict with all the info for the invoice, then render the template, then do it for all persons.
-                self.safepath_this_invoices = load_filepath(self, "Wo soll ich die Rechnungen hinspeichern?.", pathisdir=True,homedir= self.home_directory)
+                self.safepath_this_invoices = load_filepath(self, "Wo sollen die Rechnungen gespeichert werden?", pathisdir=True,homedir= self.home_directory)
                 if self.safepath_this_invoices is not None:
                     print(f"Save to {self.safepath_this_invoices}")
                     # for loading screeen i need multithreading
+                    cancel_requested = threading.Event()
+
                     class Worker(QObject):
-                        progress = pyqtSignal(str)
+                        progress = pyqtSignal(str, int, int)
                         finished = pyqtSignal(list)   # problems encountered
 
                         def __init__(self, task_func):
@@ -858,20 +931,38 @@ class MainWindow(QtWidgets.QMainWindow):
                     class StatusDialog(QDialog):
                         def __init__(self):
                             super().__init__()
-                            self.setWindowTitle("Arbeitet...")
+                            self.setWindowTitle("Rechnungen werden erstellt")
+                            self.setMinimumWidth(420)
                             self.label = QLabel("Rechnungen werden vorbereitet...")
+                            self.bar = QtWidgets.QProgressBar()
+                            self.bar.setRange(0, 0)     # indeterminate until the first update
+                            self.cancel_button = QPushButton("Abbrechen")
+                            self.cancel_button.clicked.connect(self.request_cancel)
                             layout = QVBoxLayout()
                             layout.addWidget(self.label)
+                            layout.addWidget(self.bar)
+                            layout.addWidget(self.cancel_button)
                             self.setLayout(layout)
 
-                        def update_text(self, message):
+                        def request_cancel(self):
+                            cancel_requested.set()
+                            self.cancel_button.setEnabled(False)
+                            self.label.setText("Abbruch nach der laufenden Rechnung...")
+
+                        def update_progress(self, message, done, total):
                             self.label.setText(message)
+                            if total:
+                                self.bar.setRange(0, total)
+                                self.bar.setValue(done)
 
                         def keyPressEvent(self, event):
                             # Esc would close the dialog and drop the last
-                            # reference to a still-running thread.
-                            if event.key() != Qt.Key_Escape:
-                                super().keyPressEvent(event)
+                            # reference to a still-running thread. Treat it as
+                            # a cancel request instead.
+                            if event.key() == Qt.Key_Escape:
+                                self.request_cancel()
+                                return
+                            super().keyPressEvent(event)
 
                         def closeEvent(self, event):
                             # The title-bar close button bypasses keyPressEvent.
@@ -880,7 +971,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     def task_for_worker(callback):
                         return produce_invoices_and_save(
                             self.energydata.data, self.invoices.data["detailed"], self.masterdata,
-                            self.invoices.template, self.safepath_this_invoices, callback)
+                            self.invoices.template, self.safepath_this_invoices, callback,
+                            should_cancel=cancel_requested.is_set)
 
                     dialog = StatusDialog()
 
@@ -888,7 +980,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     worker = Worker(task_for_worker)
                     worker.moveToThread(thread)
 
-                    worker.progress.connect(dialog.update_text)
+                    worker.progress.connect(dialog.update_progress)
                     worker.finished.connect(thread.quit)
                     worker.finished.connect(lambda _: dialog.accept())
                     thread.started.connect(worker.run)
@@ -1041,23 +1133,54 @@ class MainWindow(QtWidgets.QMainWindow):
                 #     # MailAdressSelection(self.emails, "An welche Mailadressen soll ich die Rechnungen schicken")
         # when we have api capabilities we can use this
         # ["Login in EEG Faktura", "", login_eeg_faktura],
-        menubardata = [["Überprüfe die Energiedatenqualität","",check_energydata],["Erstelle alle Rechnungen", "", create_invoices_and_save],["Verschicke die Rechnungen per Mail", "", send_invoices_mail],["Settings", "", change_Settings]]
+        menubardata = [["Überprüfe die Qualität der Energiedaten","",check_energydata],["Erstelle alle Rechnungen", "", create_invoices_and_save],["Verschicke die Rechnungen per Mail", "", send_invoices_mail],["Einstellungen", "", change_Settings]]
         return menubardata
+
+
+def install_exception_dialog():
+    """Show unhandled errors instead of vanishing.
+
+    The packaged build is --windowed, so it has no console: the previous hook
+    printed a traceback nobody could see and called sys.exit(1), which looked
+    to the user like the app simply disappeared.
+    """
+    original_hook = sys.excepthook
+
+    def exception_hook(exctype, value, tb):
+        if issubclass(exctype, KeyboardInterrupt):
+            original_hook(exctype, value, tb)
+            return
+        details = "".join(traceback.format_exception(exctype, value, tb))
+        print(details)
+        try:
+            box = QMessageBox()
+            box.setIcon(QMessageBox.Critical)
+            box.setWindowTitle("Unerwarteter Fehler")
+            box.setText("Es ist ein unerwarteter Fehler aufgetreten.\n\n"
+                        f"{exctype.__name__}: {value}")
+            box.setInformativeText("Über 'Details anzeigen' bekommst du den vollen Fehlerbericht - "
+                                   "bitte diesen beim Melden mitschicken.")
+            box.setDetailedText(details)
+            copy_button = box.addButton("Fehlerbericht kopieren", QMessageBox.ActionRole)
+            box.addButton("Weiter", QMessageBox.AcceptRole)
+            box.exec_()
+            if box.clickedButton() is copy_button:
+                QtWidgets.QApplication.clipboard().setText(details)
+        except Exception:
+            original_hook(exctype, value, tb)
+        # Deliberately no sys.exit: one failed action should not discard the
+        # data the user has already loaded.
+
+    sys.excepthook = exception_hook
 
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    main = MainWindow()
-    main.show()
-    sys._excepthook = sys.excepthook
-
-    def exception_hook(exctype, value, traceback):
-        print("silent error")
-        print(exctype, value, traceback)
-        sys._excepthook(exctype, value, traceback)
-        sys.exit(1)
-
-    sys.excepthook = exception_hook
+    app.setApplicationName("FakturaAddon")
+    app.setOrganizationName("Energiegemeinschaft")
+    install_exception_dialog()
+    window = MainWindow()
+    window.show()
     sys.exit(app.exec_())
 
 
