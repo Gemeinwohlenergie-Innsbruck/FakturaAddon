@@ -1,0 +1,89 @@
+name: Build macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    # macos-14 and later are Apple Silicon, so this produces an arm64 build.
+    # Intel Macs need a separate job on macos-13; an arm64 app will not run
+    # on Intel and Rosetta does not help in that direction.
+    runs-on: macos-14
+    permissions:
+      contents: write
+    env:
+      # Set at job level: the secrets context is not dependably available
+      # inside a step-level `if`.
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller pillow pytest
+
+      - name: Smoke test imports
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "import main; print('all imports resolved')"
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests -q
+
+      - name: Generate app icon
+        run: python build_tools/make_icns.py
+
+      - name: Build .app
+        run: pyinstaller build_tools/FakturaAddon.spec --noconfirm
+
+      # Ad-hoc signing is what PyInstaller already does. It is enough for the
+      # app to run locally but NOT enough to clear Gatekeeper after download -
+      # see the macOS section of the README for what the recipient must do.
+      # With an Apple Developer ID available, set the secrets below and this
+      # step signs and notarises properly instead.
+      - name: Sign and notarise (only if a Developer ID is configured)
+        if: env.HAS_SIGNING_CERT == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k actions build.keychain
+          codesign --deep --force --options runtime --timestamp \
+            --sign "$MACOS_SIGN_IDENTITY" dist/FakturaAddon.app
+          xcrun notarytool submit dist/FakturaAddon.app --keychain-profile "$MACOS_NOTARY_PROFILE" --wait
+          xcrun stapler staple dist/FakturaAddon.app
+
+      - name: Build .dmg
+        run: |
+          mkdir -p build/dmg
+          cp -R dist/FakturaAddon.app build/dmg/
+          ln -s /Applications build/dmg/Applications
+          hdiutil create -volname "FakturaAddon" -srcfolder build/dmg \
+            -ov -format UDZO dist/FakturaAddon-macos-arm64.dmg
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/FakturaAddon-macos-arm64.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

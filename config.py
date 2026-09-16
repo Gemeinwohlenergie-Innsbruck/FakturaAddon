@@ -8,9 +8,39 @@ credentials into a filter that dropped every one of them - the dialog appeared
 to work and wrote nothing.
 """
 
+import os
+import sys
 from pathlib import Path
 
-ENV_PATH = Path(__file__).parent / ".env"
+
+def _user_config_dir():
+    """Per-user config location, by platform convention."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "FakturaAddon"
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
+        return Path(base) / "FakturaAddon"
+    base = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
+    return Path(base) / "FakturaAddon"
+
+
+def _default_env_path():
+    """Where .env lives.
+
+    From a source checkout, next to the code - that is what developers expect
+    and what existing installs already use. Frozen, it must not be: inside a
+    .app or a PyInstaller folder the settings would be written into the
+    application itself, lost on every upgrade, and unwritable altogether once
+    macOS relocates a quarantined app to a read-only mount.
+    """
+    if getattr(sys, "frozen", False):
+        directory = _user_config_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / ".env"
+    return Path(__file__).parent / ".env"
+
+
+ENV_PATH = _default_env_path()
 
 # internal field name -> .env key
 ENV_KEYS = {
