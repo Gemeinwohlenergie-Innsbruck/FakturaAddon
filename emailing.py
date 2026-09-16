@@ -17,6 +17,8 @@ import os
 import imaplib
 from datetime import datetime
 
+from i18n import tr
+
 
 class MailSelection(QWidget):
     """
@@ -490,7 +492,7 @@ class SendPreviewDialog(QDialog):
         build_preview: address -> (subject, html_body, attachment_name)
         """
         super().__init__(parent)
-        self.setWindowTitle("Rechnungen verschicken")
+        self.setWindowTitle(tr("Rechnungen verschicken"))
         self.resize(1160, 680)
         self.jobs = jobs
         self.missing = missing
@@ -500,31 +502,32 @@ class SendPreviewDialog(QDialog):
         layout = QVBoxLayout(self)
 
         def plural(n):
-            return "1 Mail" if n == 1 else f"{n} Mails"
+            return tr("1 Mail") if n == 1 else tr("{n} Mails", n=n)
 
         summary = QLabel()
         if missing:
-            summary.setText(f"{plural(len(jobs))} werden verschickt · "
-                            f"{len(missing)} übersprungen (keine PDF-Rechnung gefunden)")
+            summary.setText(tr("{mails} werden verschickt · {skipped} übersprungen "
+                               "(keine PDF-Rechnung gefunden)",
+                               mails=plural(len(jobs)), skipped=len(missing)))
         else:
-            summary.setText(f"{plural(len(jobs))} werden verschickt")
+            summary.setText(tr("{mails} werden verschickt", mails=plural(len(jobs))))
         summary.setStyleSheet("font-weight: 600; padding: 4px;")
         layout.addWidget(summary)
 
         splitter = QSplitter(Qt.Horizontal)
 
         self.table = QTableWidget(len(jobs) + len(missing), 3)
-        self.table.setHorizontalHeaderLabels(["Empfänger:in", "Mailadresse", "Rechnung"])
+        self.table.setHorizontalHeaderLabels([tr("Empfänger:in"), tr("Mailadresse"), tr("Rechnung")])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         for row, (name, address, path) in enumerate(jobs):
-            self._set_row(row, name, address, "✓ Rechnung gefunden",
+            self._set_row(row, name, address, tr("✓ Rechnung gefunden"),
                           sendable=True, tooltip=os.path.basename(path))
         for offset, (name, address, expected) in enumerate(missing):
-            self._set_row(len(jobs) + offset, name, address, "✗ keine Rechnung",
-                          sendable=False, tooltip=f"{expected} nicht gefunden")
+            self._set_row(len(jobs) + offset, name, address, tr("✗ keine Rechnung"),
+                          sendable=False, tooltip=tr("{file} nicht gefunden", file=expected))
         self.table.resizeColumnsToContents()
         # Without this the attachment column is clipped by the splitter.
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -542,7 +545,7 @@ class SendPreviewDialog(QDialog):
         self.attachment_label.setStyleSheet("color: palette(mid);")
         self.body_view = QTextBrowser()
         self.body_view.setOpenExternalLinks(False)
-        right_layout.addWidget(QLabel("Vorschau"))
+        right_layout.addWidget(QLabel(tr("Vorschau")))
         right_layout.addWidget(self.subject_label)
         right_layout.addWidget(self.attachment_label)
         right_layout.addWidget(self.body_view, 1)
@@ -554,9 +557,9 @@ class SendPreviewDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = QPushButton("Abbrechen")
+        cancel = QPushButton(tr("Abbrechen"))
         cancel.clicked.connect(self.reject)
-        self.send_button = QPushButton(f"{plural(len(jobs))} verschicken")
+        self.send_button = QPushButton(tr("{mails} verschicken", mails=plural(len(jobs))))
         self.send_button.setObjectName("primaryButton")
         self.send_button.setDefault(True)
         self.send_button.setEnabled(bool(jobs))
@@ -582,20 +585,21 @@ class SendPreviewDialog(QDialog):
         if row < 0 or row >= len(self.jobs):
             # A skipped recipient has no mail to preview.
             self.subject_label.setText("")
-            self.attachment_label.setText("Für diese Person wurde keine PDF-Rechnung gefunden - "
-                                          "es wird nichts verschickt.")
+            self.attachment_label.setText(
+                tr("Für diese Person wurde keine PDF-Rechnung gefunden - "
+                   "es wird nichts verschickt."))
             self._show_html("")
             return
         address = self.jobs[row][1]
         try:
             subject, html, attachment = self.build_preview(address)
         except Exception as e:
-            self.subject_label.setText("Vorschau nicht möglich")
+            self.subject_label.setText(tr("Vorschau nicht möglich"))
             self.attachment_label.setText(str(e))
             self._show_html("")
             return
-        self.subject_label.setText(f"Betreff: {subject}")
-        self.attachment_label.setText(f"Anhang: {attachment}")
+        self.subject_label.setText(tr("Betreff: {subject}", subject=subject))
+        self.attachment_label.setText(tr("Anhang: {file}", file=attachment))
         self._show_html(html)
 
     @staticmethod

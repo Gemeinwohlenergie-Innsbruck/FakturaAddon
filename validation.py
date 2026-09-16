@@ -14,6 +14,8 @@ import re
 
 import pandas as pd
 
+from i18n import tr
+
 ERROR = "error"      # will produce a wrong result or be rejected downstream
 WARNING = "warning"  # probably wrong, worth a look
 INFO = "info"        # worth knowing
@@ -94,8 +96,8 @@ def check_billing_period_matches_energy(invoice_details, energydata):
     findings = []
     period = billing_period(invoice_details)
     if period is None:
-        return [Finding(WARNING, "Abrechnungszeitraum",
-                        "Der Abrechnungszeitraum konnte nicht aus den Rechnungsdaten gelesen werden.")]
+        return [Finding(WARNING, tr("Abrechnungszeitraum"),
+                        tr("Der Abrechnungszeitraum konnte nicht aus den Rechnungsdaten gelesen werden."))]
     if energydata is None or energydata.empty:
         return findings
     year, quarter = period
@@ -104,24 +106,29 @@ def check_billing_period_matches_energy(invoice_details, energydata):
         index = pd.to_datetime(energydata.index)
         data_start, data_end = index.min().date(), index.max().date()
     except Exception:
-        return [Finding(WARNING, "Energiedaten",
-                        "Der Zeitraum der Energiedaten konnte nicht bestimmt werden.")]
+        return [Finding(WARNING, tr("Energiedaten"),
+                        tr("Der Zeitraum der Energiedaten konnte nicht bestimmt werden."))]
 
     if data_end < start or data_start > end:
         findings.append(Finding(
-            ERROR, "Abrechnungszeitraum",
-            f"Die Energiedaten ({data_start:%d.%m.%Y} - {data_end:%d.%m.%Y}) liegen komplett "
-            f"außerhalb des Abrechnungsquartals {year} Q{quarter} "
-            f"({start:%d.%m.%Y} - {end:%d.%m.%Y}). Vermutlich wurde die falsche Datei geladen."))
+            ERROR, tr("Abrechnungszeitraum"),
+            tr("Die Energiedaten ({from_} - {to}) liegen komplett außerhalb des "
+               "Abrechnungsquartals {year} Q{quarter} ({start} - {end}). "
+               "Vermutlich wurde die falsche Datei geladen.",
+               from_=f"{data_start:%d.%m.%Y}", to=f"{data_end:%d.%m.%Y}",
+               year=year, quarter=quarter,
+               start=f"{start:%d.%m.%Y}", end=f"{end:%d.%m.%Y}")))
         return findings
 
     missing_days = (max(0, (data_start - start).days) + max(0, (end - data_end).days))
     if missing_days > 1:
         findings.append(Finding(
-            WARNING, "Abrechnungszeitraum",
-            f"Die Energiedaten decken {year} Q{quarter} nicht ganz ab: "
-            f"vorhanden {data_start:%d.%m.%Y} - {data_end:%d.%m.%Y}, "
-            f"erwartet {start:%d.%m.%Y} - {end:%d.%m.%Y}."))
+            WARNING, tr("Abrechnungszeitraum"),
+            tr("Die Energiedaten decken {year} Q{quarter} nicht ganz ab: "
+               "vorhanden {from_} - {to}, erwartet {start} - {end}.",
+               year=year, quarter=quarter,
+               from_=f"{data_start:%d.%m.%Y}", to=f"{data_end:%d.%m.%Y}",
+               start=f"{start:%d.%m.%Y}", end=f"{end:%d.%m.%Y}")))
     return findings
 
 
@@ -137,9 +144,9 @@ def check_names_in_energydata(invoice_details, energydata, resolve_name):
     if not unmatched:
         return []
     return [Finding(
-        ERROR, "Namen",
-        f"{len(unmatched)} Name(n) aus den Rechnungsdaten kommen in den Energiedaten nicht vor. "
-        f"Diese Rechnungen bekommen keine Grafik.",
+        ERROR, tr("Namen"),
+        tr("{n} Name(n) aus den Rechnungsdaten kommen in den Energiedaten nicht vor. "
+           "Diese Rechnungen bekommen keine Grafik.", n=len(unmatched)),
         unmatched)]
 
 
@@ -154,11 +161,11 @@ def check_ibans(invoice_details):
     invalid = [f"{name}: {iban}" for name, iban in per_member.items()
                if str(iban).strip() and not pd.isna(iban) and not iban_is_valid(iban)]
     if missing:
-        findings.append(Finding(ERROR, "IBAN",
-                                f"{len(missing)} Mitglied(er) ohne IBAN.", missing))
+        findings.append(Finding(ERROR, tr("IBAN"),
+                                tr("{n} Mitglied(er) ohne IBAN.", n=len(missing)), missing))
     if invalid:
-        findings.append(Finding(ERROR, "IBAN",
-                                f"{len(invalid)} IBAN(s) mit ungültiger Prüfsumme.", invalid))
+        findings.append(Finding(ERROR, tr("IBAN"),
+                                tr("{n} IBAN(s) mit ungültiger Prüfsumme.", n=len(invalid)), invalid))
     return findings
 
 
@@ -170,8 +177,8 @@ def check_mandates(invoice_details):
     if debits.empty:
         return []
     findings = []
-    for column, label in (("Empfänger Mandatsreferenz", "Mandatsreferenz"),
-                          ("Empfänger Mandatsausstellung", "Mandatsausstellungsdatum")):
+    for column, label in (("Empfänger Mandatsreferenz", tr("Mandatsreferenz")),
+                          ("Empfänger Mandatsausstellung", tr("Mandatsausstellungsdatum"))):
         if column not in debits.columns:
             continue
         per_member = debits.groupby("Empfänger Name")[column].first()
@@ -179,8 +186,9 @@ def check_mandates(invoice_details):
                    if value is None or pd.isna(value) or not str(value).strip()]
         if missing:
             findings.append(Finding(
-                ERROR, "SEPA-Mandat",
-                f"{len(missing)} Lastschrift(en) ohne {label}. Die Bank weist diese zurück.",
+                ERROR, tr("SEPA-Mandat"),
+                tr("{n} Lastschrift(en) ohne {field}. Die Bank weist diese zurück.",
+                   n=len(missing), field=label),
                 missing))
     return findings
 
@@ -198,9 +206,9 @@ def check_duplicate_names(invoice_details):
     if not clashes:
         return []
     return [Finding(
-        ERROR, "Doppelte Namen",
-        f"{len(clashes)} Name(n) kommen mit mehr als einer IBAN vor. Der SEPA-Export fasst nach "
-        f"Namen zusammen, diese Zahlungen gingen auf ein einziges Konto.",
+        ERROR, tr("Doppelte Namen"),
+        tr("{n} Name(n) kommen mit mehr als einer IBAN vor. Der SEPA-Export fasst nach Namen "
+           "zusammen, diese Zahlungen gingen auf ein einziges Konto.", n=len(clashes)),
         clashes)]
 
 
@@ -212,12 +220,12 @@ def check_amounts(invoice_details):
     amounts = pd.to_numeric(invoice_details["Pos. Bruttobetrag"], errors="coerce")
     zero = invoice_details.loc[amounts.fillna(0) == 0, "Empfänger Name"].unique().tolist()
     if zero:
-        findings.append(Finding(WARNING, "Beträge",
-                                f"{len(zero)} Mitglied(er) mit einer Position von 0,00 €.", zero))
+        findings.append(Finding(WARNING, tr("Beträge"),
+                                tr("{n} Mitglied(er) mit einer Position von 0,00 €.", n=len(zero)), zero))
     unparsable = invoice_details.loc[amounts.isna(), "Empfänger Name"].unique().tolist()
     if unparsable:
-        findings.append(Finding(ERROR, "Beträge",
-                                f"{len(unparsable)} Position(en) mit unlesbarem Betrag.", unparsable))
+        findings.append(Finding(ERROR, tr("Beträge"),
+                                tr("{n} Position(en) mit unlesbarem Betrag.", n=len(unparsable)), unparsable))
     return findings
 
 
@@ -233,8 +241,8 @@ def check_email_addresses(masterdata, invoice_details, members_with_invoices):
     except Exception:
         return []
     if recipients.empty:
-        return [Finding(WARNING, "Mailadressen",
-                        "Zu den geladenen Rechnungen wurde niemand in den Stammdaten gefunden.")]
+        return [Finding(WARNING, tr("Mailadressen"),
+                        tr("Zu den geladenen Rechnungen wurde niemand in den Stammdaten gefunden."))]
     findings = []
     missing, invalid = [], []
     for _, row in recipients.iterrows():
@@ -245,20 +253,20 @@ def check_email_addresses(masterdata, invoice_details, members_with_invoices):
         elif not EMAIL_RE.match(str(address).strip()):
             invalid.append(f"{who}: {address}")
     if missing:
-        findings.append(Finding(WARNING, "Mailadressen",
-                                f"{len(missing)} Mitglied(er) mit Rechnung haben keine Mailadresse.",
+        findings.append(Finding(WARNING, tr("Mailadressen"),
+                                tr("{n} Mitglied(er) mit Rechnung haben keine Mailadresse.", n=len(missing)),
                                 missing))
     if invalid:
-        findings.append(Finding(ERROR, "Mailadressen",
-                                f"{len(invalid)} Mailadresse(n) sehen nicht wie Adressen aus.",
+        findings.append(Finding(ERROR, tr("Mailadressen"),
+                                tr("{n} Mailadresse(n) sehen nicht wie Adressen aus.", n=len(invalid)),
                                 invalid))
     addresses = [str(a).strip().lower() for a in recipients["E-Mail"].dropna() if str(a).strip()]
     duplicates = sorted({a for a in addresses if addresses.count(a) > 1})
     if duplicates:
         findings.append(Finding(
-            WARNING, "Mailadressen",
-            f"{len(duplicates)} Adresse(n) kommen mehrfach vor - diese Personen bekommen "
-            f"mehrere Mails.", duplicates))
+            WARNING, tr("Mailadressen"),
+            tr("{n} Adresse(n) kommen mehrfach vor - diese Personen bekommen mehrere Mails.",
+               n=len(duplicates)), duplicates))
     return findings
 
 
@@ -272,9 +280,9 @@ def check_community_metadata(masterdata):
                if not str(masterdata.metadata.get(key, "") or "").strip()]
     if not missing:
         return []
-    return [Finding(WARNING, "Stammdaten der EEG",
-                    f"{len(missing)} Feld(er) fehlen in den Stammdaten und bleiben auf der "
-                    f"Rechnung leer.", missing)]
+    return [Finding(WARNING, tr("Stammdaten der EEG"),
+                    tr("{n} Feld(er) fehlen in den Stammdaten und bleiben auf der Rechnung leer.",
+                       n=len(missing)), missing)]
 
 
 def validate(invoices=None, masterdata=None, energydata=None,

@@ -27,6 +27,7 @@ ENV_KEYS = {
     "EEG_name":                "EEG_NAME",
     "template_export_invoice": "TEMPLATE_EXPORT_INVOICE",
     "template_email":          "TEMPLATE_EMAIL",
+    "language":                "LANGUAGE",
 }
 
 

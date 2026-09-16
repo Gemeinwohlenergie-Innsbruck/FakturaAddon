@@ -8,6 +8,9 @@ from io import BytesIO
 from jinja2 import Environment, FileSystemLoader, PackageLoader, select_autoescape
 from openpyxl import load_workbook
 
+import i18n
+from i18n import tr
+
 
 
 class Data():
@@ -36,7 +39,7 @@ class Data():
 #             mandates = pd.read_excel(filepath)
 #         except:
 #             errorbox = QMessageBox()
-#             errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+#             errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
 #             errorbox.exec_()
 #             return
 #     else:
@@ -51,7 +54,7 @@ class Data():
 #         mandates = mandates.rename(columns={'Vorname (gleich wie in eegfaktura)': 'Vorname', 'Nachname (gleich wie in eegfaktura)': 'Nachname','Mitgliedsnummer aus eegfaktura ist auch die Mandatsreferenz':'Mitgliedsnummer'})
 #     except:
 #         errorbox = QMessageBox()
-#         errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+#         errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
 #         errorbox.exec_()
 #         return
 #     return mandates
@@ -73,8 +76,8 @@ def load_invoices(filepath='',nc = False):
             data = None
             datadetailed = None
             errorbox = QMessageBox()
-            errorbox.setWindowTitle("Datei nicht lesbar")
-            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle(tr("Datei nicht lesbar"))
+            errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
             errorbox.exec_()
     else:
         print("Nextcloud loading")
@@ -96,8 +99,9 @@ def load_invoice_template(filepath, nc = False):
     except Exception as e:
         print(f"Could not load invoice template: {e}")
         errorbox = QMessageBox()
-        errorbox.setWindowTitle("Rechnungsvorlage")
-        errorbox.setText(f"Die Rechnungsvorlage konnte nicht geladen werden:\n{filepath}\n\n{e}")
+        errorbox.setWindowTitle(tr("Rechnungsvorlage"))
+        errorbox.setText(tr("Die Rechnungsvorlage konnte nicht geladen werden:\n{path}\n\n{error}",
+                            path=filepath, error=e))
         errorbox.exec_()
         return None
 
@@ -110,8 +114,8 @@ def load_mail_adresses(filepath = '', nc = ''):
             print(e)
             data = None
             errorbox = QMessageBox()
-            errorbox.setWindowTitle("Datei nicht lesbar")
-            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle(tr("Datei nicht lesbar"))
+            errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
             errorbox.exec_()
     else:
         print("Nextcloud loading (not implemented)")
@@ -130,8 +134,9 @@ def load_mail_template(filepath = ''):
     except Exception as e:
         print(f"Could not load mail template: {e}")
         errorbox = QMessageBox()
-        errorbox.setWindowTitle("Emailvorlage")
-        errorbox.setText(f"Die Emailvorlage konnte nicht geladen werden:\n{filepath}\n\n{e}")
+        errorbox.setWindowTitle(tr("Emailvorlage"))
+        errorbox.setText(tr("Die Emailvorlage konnte nicht geladen werden:\n{path}\n\n{error}",
+                            path=filepath, error=e))
         errorbox.exec_()
         return None
 
@@ -152,8 +157,8 @@ def load_energy_qovdata(filepath = "", nc = False):
         except Exception as e:
             print(e)
             errorbox = QMessageBox()
-            errorbox.setWindowTitle("Datei nicht lesbar")
-            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle(tr("Datei nicht lesbar"))
+            errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
             errorbox.exec_()
             return
     else:
@@ -237,7 +242,7 @@ def load_energy_data(filepath = "", nc = False, qov = False):
             # silently dropped.
             print(worker.error)
             errorbox = QMessageBox()
-            errorbox.setWindowTitle("Datei nicht lesbar")
+            errorbox.setWindowTitle(tr("Datei nicht lesbar"))
             errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"
                              f"\n\n{worker.error}")
             errorbox.exec_()
@@ -255,8 +260,8 @@ def load_faktura_member_export_template(filepath = "",nc =False, nc_instance = '
             print(template)
         except:
             errorbox = QMessageBox()
-            errorbox.setWindowTitle("Datei nicht lesbar")
-            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle(tr("Datei nicht lesbar"))
+            errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
             errorbox.exec_()
             return
     else:
@@ -294,8 +299,8 @@ def load_masterdata(filepath, nc = False):
             print(e)
             data = None
             errorbox = QMessageBox()
-            errorbox.setWindowTitle("Datei nicht lesbar")
-            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+            errorbox.setWindowTitle(tr("Datei nicht lesbar"))
+            errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
             errorbox.exec_()
     else:
         print("Nextcloud loading (not implemented)")
@@ -388,7 +393,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QFormLayout, QLineEdit,
     QPushButton, QDialogButtonBox, QLabel, QVBoxLayout, QHBoxLayout, QFileDialog,
-    QCheckBox
+    QCheckBox, QComboBox, QMessageBox
 )
 
 # Single source of truth. Three copies of these used to live in this file,
@@ -516,7 +521,7 @@ class LoginDialog(QDialog):
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Einstellungen")
+        self.setWindowTitle(tr("Einstellungen"))
         self.setFixedWidth(700)
 
         layout = QVBoxLayout(self)
@@ -533,8 +538,8 @@ class SettingsDialog(QDialog):
         self.edit_my_mail_pw.setEchoMode(QLineEdit.Password)
         # Reveal, so a mistyped password can be spotted without sending to
         # the whole membership to find out.
-        self.edit_my_mail_pw.setPlaceholderText("wird nur lokal in .env gespeichert")
-        show_pw = QCheckBox("anzeigen")
+        self.edit_my_mail_pw.setPlaceholderText(tr("wird nur lokal in .env gespeichert"))
+        show_pw = QCheckBox(tr("anzeigen"))
         show_pw.toggled.connect(
             lambda on: self.edit_my_mail_pw.setEchoMode(
                 QLineEdit.Normal if on else QLineEdit.Password))
@@ -544,14 +549,17 @@ class SettingsDialog(QDialog):
 
         smtp_row = QHBoxLayout()
         smtp_row.addWidget(self.edit_smtp_server)
-        smtp_row.addWidget(QLabel("Port:"))
+        smtp_row.addWidget(QLabel(tr("Port:")))
         smtp_row.addWidget(self.edit_smtp_port)
         self.edit_eeg_name    = QLineEdit()
+        self.combo_language = QComboBox()
+        for code, label in i18n.LANGUAGES.items():
+            self.combo_language.addItem(label, code)
 
         # Home directory with browse button
         dir_row = QHBoxLayout()
         self.edit_home_directory = QLineEdit()
-        browse_btn = QPushButton("Durchsuchen…")
+        browse_btn = QPushButton(tr("Durchsuchen…"))
         browse_btn.clicked.connect(self._browse_directory)
         dir_row.addWidget(self.edit_home_directory)
         dir_row.addWidget(browse_btn)
@@ -559,30 +567,31 @@ class SettingsDialog(QDialog):
         # Template fields with browse buttons
         self.edit_template_invoice = QLineEdit("template_invoice_clean.docx")
         invoice_row = QHBoxLayout()
-        invoice_browse = QPushButton("Durchsuchen…")
+        invoice_browse = QPushButton(tr("Durchsuchen…"))
         invoice_browse.clicked.connect(lambda: self._browse_file(self.edit_template_invoice, "Word Documents (*.docx)"))
         invoice_row.addWidget(self.edit_template_invoice)
         invoice_row.addWidget(invoice_browse)
 
         self.edit_template_email = QLineEdit("email_template.html")
         email_row = QHBoxLayout()
-        email_browse = QPushButton("Durchsuchen…")
+        email_browse = QPushButton(tr("Durchsuchen…"))
         email_browse.clicked.connect(lambda: self._browse_file(self.edit_template_email, "HTML Files (*.html)"))
         email_row.addWidget(self.edit_template_email)
         email_row.addWidget(email_browse)
 
-        form.addRow("Mailadresse:", self.edit_my_mail)
-        form.addRow("Mail-Passwort:", pw_row)
-        form.addRow("IMAP-Server (Posteingang):", self.edit_imap_server)
-        form.addRow("SMTP-Server (Versand):", smtp_row)
-        form.addRow("Basisordner:", dir_row)
-        form.addRow("Name der EEG:", self.edit_eeg_name)
-        form.addRow("Rechnungsvorlage:", invoice_row)
-        form.addRow("Emailvorlage:", email_row)
+        form.addRow(tr("Mailadresse:"), self.edit_my_mail)
+        form.addRow(tr("Mail-Passwort:"), pw_row)
+        form.addRow(tr("IMAP-Server (Posteingang):"), self.edit_imap_server)
+        form.addRow(tr("SMTP-Server (Versand):"), smtp_row)
+        form.addRow(tr("Basisordner:"), dir_row)
+        form.addRow(tr("Name der EEG:"), self.edit_eeg_name)
+        form.addRow(tr("Rechnungsvorlage:"), invoice_row)
+        form.addRow(tr("Emailvorlage:"), email_row)
+        form.addRow(tr("Sprache:"), self.combo_language)
         layout.addLayout(form)
 
-        note = QLabel("Zugangsdaten werden unverschlüsselt in .env neben dem Programm "
-                      "gespeichert. Diese Datei niemals weitergeben oder committen.")
+        note = QLabel(tr("Zugangsdaten werden unverschlüsselt in .env neben dem Programm "
+                         "gespeichert. Diese Datei niemals weitergeben oder committen."))
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -592,7 +601,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.test_result)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        self.test_button = buttons.addButton("Verbindung testen", QDialogButtonBox.ActionRole)
+        self.test_button = buttons.addButton(tr("Verbindung testen"), QDialogButtonBox.ActionRole)
         self.test_button.clicked.connect(self._on_test)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
@@ -620,15 +629,18 @@ class SettingsDialog(QDialog):
             self.edit_template_invoice.setText(saved["template_export_invoice"])
         if saved.get("template_email"):
             self.edit_template_email.setText(saved["template_email"])
+        index = self.combo_language.findData(saved.get("language") or i18n.DEFAULT_LANGUAGE)
+        self.combo_language.setCurrentIndex(max(0, index))
+        self._language_on_open = self.combo_language.currentData()
 
     def _browse_directory(self):
-        path = QFileDialog.getExistingDirectory(self, "Basisordner auswählen",
+        path = QFileDialog.getExistingDirectory(self, tr("Basisordner auswählen"),
                                                 self.edit_home_directory.text() or str(Path.home()))
         if path:
             self.edit_home_directory.setText(path)
 
     def _browse_file(self, edit: QLineEdit, file_filter: str):
-        path, _ = QFileDialog.getOpenFileName(self, "Datei auswählen",
+        path, _ = QFileDialog.getOpenFileName(self, tr("Datei auswählen"),
                                               self.edit_home_directory.text() or str(Path.home()),
                                               file_filter)
         if path:
@@ -639,7 +651,7 @@ class SettingsDialog(QDialog):
         from emailing import test_mail_login
         settings = self.get_settings()
         self.test_result.setVisible(True)
-        self.test_result.setText("Teste Verbindung…")
+        self.test_result.setText(tr("Teste Verbindung…"))
         self.test_button.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         QApplication.processEvents()
@@ -657,6 +669,11 @@ class SettingsDialog(QDialog):
     def _on_save(self):
         settings = self.get_settings()
         save_env(settings)
+        if settings["language"] != self._language_on_open:
+            # Switching live would mean rebuilding every widget that has
+            # already been created; a restart is simpler and honest.
+            QMessageBox.information(self, tr("Sprache geändert"),
+                                    tr("Die Sprache wird beim nächsten Start übernommen."))
         self.accept()
 
     def get_settings(self) -> dict:
@@ -671,6 +688,7 @@ class SettingsDialog(QDialog):
             "EEG_name":                 self.edit_eeg_name.text().strip(),
             "template_export_invoice":  self.edit_template_invoice.text().strip(),
             "template_email":           self.edit_template_email.text().strip(),
+            "language":                 self.combo_language.currentData(),
         }
 
 

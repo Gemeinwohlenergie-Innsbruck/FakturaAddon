@@ -12,6 +12,8 @@ matplotlib.use('Agg')
 from io import BytesIO
 from PyQt5.QtWidgets import QMessageBox
 
+from i18n import tr
+
 
 def check_doubles(invoices):
     debit = invoices[(invoices["Dokumenttyp"] == "Rechnung")]
@@ -147,8 +149,9 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
         transferexport = None
 
     reply = QMessageBox.question(None,
-        'Frage',
-        'Willst du jede Positionen einzeln ausweisen \n(z.b. eine eigene Überweisung für Mitgliedsbeitrag und Stromkosten)??',
+        tr('Frage'),
+        tr('Willst du jede Positionen einzeln ausweisen \n(z.b. eine eigene Überweisung für '
+           'Mitgliedsbeitrag und Stromkosten)??'),
         QMessageBox.Yes | QMessageBox.No,
         QMessageBox.No
     )
@@ -266,7 +269,8 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
             problems.append(f"Abgebrochen nach {index} von {nr_all_persons} Rechnungen.")
             break
         print(f"({index+1}/{nr_all_persons}) Make invoice for {name}")
-        callback(f"({index+1}/{nr_all_persons}) Rechnung für {name}...", index, nr_all_persons)
+        callback(tr("({done}/{total}) Rechnung für {name}...",
+                    done=index + 1, total=nr_all_persons, name=name), index, nr_all_persons)
         invoicethis = invoicedata[invoicedata["Empfänger Name"] == name]
         debits_this =  debit[debit["Empfänger Name"] == name]
         transfers_this = transfer[transfer["Empfänger Name"] == name]

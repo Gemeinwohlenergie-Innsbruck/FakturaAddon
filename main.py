@@ -20,6 +20,8 @@ from selection import select_invoice_positions, members_with_invoices
 from config import ENV_PATH, load_env
 import validation
 import theme
+import i18n
+from i18n import tr
 from exporting import resolve_name_in_energydata
 from PyQt5.QtWidgets import QHBoxLayout
 import datetime as dt
@@ -55,7 +57,8 @@ class TableView(QtWidgets.QTableWidget):
             # the import". Say it out loud in a final row.
             self.insertRow(self.rowCount())
             note = QtWidgets.QTableWidgetItem(
-                f"… {hidden} weitere Zeilen nicht angezeigt ({data.shape[0]} gesamt)")
+                tr("… {hidden} weitere Zeilen nicht angezeigt ({total} gesamt)",
+                   hidden=hidden, total=data.shape[0]))
             note.setFlags(note.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             self.setItem(self.rowCount() - 1, 0, note)
             if self.columnCount() > 1:
@@ -132,13 +135,13 @@ class FileLoadPanel(QtWidgets.QWidget):
         grid.setColumnStretch(2, 0)
         self._buttons = {}
         for row, (key, label) in enumerate(rows):
-            name = QLabel(label)
-            status = QLabel("nicht geladen")
+            name = QLabel(tr(label))
+            status = QLabel(tr("nicht geladen"))
             status.setStyleSheet("color: palette(mid);")
             status.setWordWrap(False)
             status.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            button = QPushButton("Durchsuchen…")
-            button.setToolTip(f"{label} auswählen und laden")
+            button = QPushButton(tr("Durchsuchen…"))
+            button.setToolTip(tr("{label} auswählen und laden", label=label))
             grid.addWidget(name, row, 0)
             grid.addWidget(status, row, 1)
             grid.addWidget(button, row, 2)
@@ -158,7 +161,7 @@ class FileLoadPanel(QtWidgets.QWidget):
             label.setToolTip(path)
             label.setStyleSheet(f"color: {theme.OK};")
         else:
-            label.setText("nicht geladen")
+            label.setText(tr("nicht geladen"))
             label.setToolTip("")
             label.setStyleSheet(f"color: {theme.MUTED};")
 
@@ -191,16 +194,19 @@ def open_in_default_app(path):
 class ValidationDialog(QDialog):
     """Findings from the pre-flight checks, worst first."""
 
-    SEVERITY_LABEL = {validation.ERROR: "Fehler",
-                      validation.WARNING: "Warnung",
-                      validation.INFO: "Hinweis"}
+    @staticmethod
+    def severity_label(severity):
+        return {validation.ERROR: tr("Fehler"),
+                validation.WARNING: tr("Warnung"),
+                validation.INFO: tr("Hinweis")}.get(severity, severity)
+
     SEVERITY_COLOUR = {validation.ERROR: theme.ERROR,
                        validation.WARNING: theme.WARNING,
                        validation.INFO: theme.BLUE}
 
     def __init__(self, findings, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Datenprüfung")
+        self.setWindowTitle(tr("Datenprüfung"))
         self.resize(760, 520)
         self.findings = findings
 
@@ -210,28 +216,27 @@ class ValidationDialog(QDialog):
 
         summary = QLabel()
         if not findings:
-            summary.setText("Keine Probleme gefunden.")
+            summary.setText(tr("Keine Probleme gefunden."))
         else:
             parts = []
             if errors:
-                parts.append(f"{errors} Fehler")
+                parts.append(tr("{n} Fehler", n=errors))
             if warnings:
-                parts.append(f"{warnings} Warnung(en)")
+                parts.append(tr("{n} Warnung(en)", n=warnings))
             rest = len(findings) - errors - warnings
             if rest:
-                parts.append(f"{rest} Hinweis(e)")
+                parts.append(tr("{n} Hinweis(e)", n=rest))
             summary.setText(" · ".join(parts))
         summary.setStyleSheet("font-weight: 600; padding: 4px;")
         layout.addWidget(summary)
 
         tree = QtWidgets.QTreeWidget()
-        tree.setHeaderLabels(["", "Bereich", "Befund"])
+        tree.setHeaderLabels(["", tr("Bereich"), tr("Befund")])
         tree.setColumnWidth(0, 80)
         tree.setColumnWidth(1, 160)
         for finding in findings:
             item = QtWidgets.QTreeWidgetItem(
-                [self.SEVERITY_LABEL.get(finding.severity, finding.severity),
-                 finding.category, finding.message])
+                [self.severity_label(finding.severity), finding.category, finding.message])
             item.setForeground(0, QBrush(QColor(self.SEVERITY_COLOUR.get(finding.severity, "#333"))))
             for row in finding.rows:
                 item.addChild(QtWidgets.QTreeWidgetItem(["", "", str(row)]))
@@ -241,11 +246,11 @@ class ValidationDialog(QDialog):
         layout.addWidget(tree, 1)
 
         buttons = QHBoxLayout()
-        copy_button = QPushButton("Bericht kopieren")
+        copy_button = QPushButton(tr("Bericht kopieren"))
         copy_button.clicked.connect(self.copy_report)
         buttons.addWidget(copy_button)
         buttons.addStretch(1)
-        close_button = QPushButton("Schließen")
+        close_button = QPushButton(tr("Schließen"))
         close_button.setDefault(True)
         close_button.clicked.connect(self.accept)
         buttons.addWidget(close_button)
@@ -254,10 +259,10 @@ class ValidationDialog(QDialog):
     def report_text(self):
         lines = []
         for finding in self.findings:
-            lines.append(f"[{self.SEVERITY_LABEL.get(finding.severity, finding.severity)}] "
+            lines.append(f"[{self.severity_label(finding.severity)}] "
                          f"{finding.category}: {finding.message}")
             lines.extend(f"    - {row}" for row in finding.rows)
-        return "\n".join(lines) or "Keine Probleme gefunden."
+        return "\n".join(lines) or tr("Keine Probleme gefunden.")
 
     def copy_report(self):
         QtWidgets.QApplication.clipboard().setText(self.report_text())
@@ -286,7 +291,8 @@ class WorkflowPanel(QtWidgets.QWidget):
         for row, (key, title, optional) in enumerate(steps):
             marker = QLabel("○")
             marker.setFixedWidth(16)
-            button = QPushButton(f"{row + 1}. {title}" + ("  (optional)" if optional else ""))
+            button = QPushButton(f"{row + 1}. {tr(title)}"
+                                 + ("  " + tr("(optional)") if optional else ""))
             button.setObjectName("stepButton")
             button.setMinimumWidth(240)
             reason = QLabel("")
@@ -313,17 +319,17 @@ class WorkflowPanel(QtWidgets.QWidget):
         button.style().unpolish(button)
         button.style().polish(button)
         if missing:
-            reason = "wartet auf: " + ", ".join(missing)
+            reason = tr("wartet auf: {missing}", missing=", ".join(missing))
             marker.setText("○")
             marker.setStyleSheet(f"color: {theme.MUTED};")
             self._buttons[key].setToolTip(reason)
         elif done:
-            reason = "erledigt"
+            reason = tr("erledigt")
             marker.setText("✓")
             marker.setStyleSheet(f"color: {theme.OK}; font-weight: 600;")
             self._buttons[key].setToolTip("")
         else:
-            reason = "bereit"
+            reason = tr("bereit")
             marker.setText("▶")
             marker.setStyleSheet(f"color: {theme.ORANGE_DARK}; font-weight: 600;")
             self._buttons[key].setToolTip("")
@@ -334,7 +340,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
         print("Initializing Window")
-        self.setWindowTitle("Faktura Infinity Addon")
+        self.setWindowTitle(tr("Faktura Infinity Addon"))
         # Default size only; restore_geometry() overrides it with the size and
         # position the window was last closed at. No move() - a hardcoded
         # position can land the window off-screen on a smaller display.
@@ -410,8 +416,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # never reaches the macOS menu bar.
         menubar = self.menuBar()
         # Settings was buried at the bottom of an unrelated menu.
-        settings_menu = menubar.addMenu("Einstellungen")
-        settings_action = QtWidgets.QAction("Einstellungen…", self)
+        settings_menu = menubar.addMenu(tr("Einstellungen"))
+        settings_action = QtWidgets.QAction(tr("Einstellungen…"), self)
         # Explicit shortcut and NoRole: PreferencesRole would move this into
         # the macOS application menu and leave the menu here empty.
         settings_action.setShortcut("Ctrl+,")
@@ -420,13 +426,13 @@ class MainWindow(QtWidgets.QMainWindow):
         settings_menu.addAction(settings_action)
         self.menubardata_Make_invoices = self.init_menubardata_make_invoices()
         if self.menubardata_Make_invoices:
-            self._build_menu(menubar, "Rechnungen erstellen und verschicken",
+            self._build_menu(menubar, tr("Rechnungen erstellen und verschicken"),
                              self.menubardata_Make_invoices)
         self.menubardata_Infinity = self.init_menubardata_Infinity()
         if self.menubardata_Infinity:
-            infinity_menu = self._build_menu(menubar, "Infinity Export", self.menubardata_Infinity)
+            infinity_menu = self._build_menu(menubar, tr("Infinity Export"), self.menubardata_Infinity)
             infinity_menu.addSeparator()
-            close_action = QtWidgets.QAction("Schließen", self)
+            close_action = QtWidgets.QAction(tr("Schließen"), self)
             close_action.setShortcut(QtGui.QKeySequence.Quit)
             # close(), not sys.exit(0): lets closeEvent save the geometry and
             # gives Qt a chance to shut down cleanly.
@@ -456,18 +462,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.horizontalLayout.addLayout(self.verticalLayout1)
         self.horizontalLayout.addLayout(self.verticalLayout0)
-        self.verticalLayout0.addWidget(self.section_label("Rechnungsdaten KonsumentInnen"))
+        self.verticalLayout0.addWidget(self.section_label(tr("Rechnungsdaten KonsumentInnen")))
         self.verticalLayout0.addWidget(self.table_0_0)
-        self.verticalLayout0.addWidget(self.section_label("Energiedaten"))
+        self.verticalLayout0.addWidget(self.section_label(tr("Energiedaten")))
         self.verticalLayout0.addWidget(self.table_0_1)
         self.verticalLayout0.setStretch(1, 7)
         self.verticalLayout0.setStretch(3, 7)
 
-        self.verticalLayout1.addWidget(self.section_label("Rechnungsdaten ProduzentInnen"))
+        self.verticalLayout1.addWidget(self.section_label(tr("Rechnungsdaten ProduzentInnen")))
         self.verticalLayout1.addWidget(self.table_1_0)
-        self.verticalLayout1.addWidget(self.section_label("Dateien laden"))
+        self.verticalLayout1.addWidget(self.section_label(tr("Dateien laden")))
         self.verticalLayout1.addWidget(self.filepanel)
-        self.verticalLayout1.addWidget(self.section_label("Ablauf"))
+        self.verticalLayout1.addWidget(self.section_label(tr("Ablauf")))
         self.verticalLayout1.addWidget(self.workflow)
         self.verticalLayout1.setStretch(1, 7)
         self.verticalLayout1.setStretch(3, 4)
@@ -553,21 +559,21 @@ class MainWindow(QtWidgets.QMainWindow):
         has_invoice_template = self.invoices.template is not None
         has_mail_template = self.emails.template is not None
         return {
-            "validate": [] if has_invoices else ["Rechnungsdaten"],
-            "check_energy": [] if has_qov else ["Quartalsenergiedaten QoV"],
+            "validate": [] if has_invoices else [tr("Rechnungsdaten")],
+            "check_energy": [] if has_qov else [tr("Quartalsenergiedaten QoV")],
             # Energiedaten belongs here: produce_invoices_and_save dereferences
             # it unconditionally, so starting without it used to blow up inside
             # the worker rather than being refused up front.
             "create_invoices": [label for label, ok in [
-                ("Rechnungsdaten", has_invoices),
-                ("Stammdaten", has_master),
-                ("Energiedaten", has_energy),
-                ("Rechnungsvorlage", has_invoice_template)] if not ok],
+                (tr("Rechnungsdaten"), has_invoices),
+                (tr("Stammdaten"), has_master),
+                (tr("Energiedaten"), has_energy),
+                (tr("Rechnungsvorlage"), has_invoice_template)] if not ok],
             "send_mail": [label for label, ok in [
-                ("Rechnungsdaten", has_invoices),
-                ("Stammdaten", has_master),
-                ("Emailvorlage", has_mail_template)] if not ok],
-            "sepa_export": [] if has_invoices else ["Rechnungsdaten"],
+                (tr("Rechnungsdaten"), has_invoices),
+                (tr("Stammdaten"), has_master),
+                (tr("Emailvorlage"), has_mail_template)] if not ok],
+            "sepa_export": [] if has_invoices else [tr("Rechnungsdaten")],
         }
 
     def mark_step_done(self, key):
@@ -583,7 +589,7 @@ class MainWindow(QtWidgets.QMainWindow):
             action = self.menu_actions.get(key)
             if action is not None:
                 action.setEnabled(not missing)
-                action.setToolTip("wartet auf: " + ", ".join(missing) if missing else "")
+                action.setToolTip(tr("wartet auf: {missing}", missing=", ".join(missing)) if missing else "")
 
     def init_data(self):
         #self.mandates = mandates
@@ -596,33 +602,33 @@ class MainWindow(QtWidgets.QMainWindow):
     def report_invoice_problems(self, problems):
         """Show what a batch skipped, instead of losing it to a console nobody sees."""
         if not problems:
-            QMessageBox.information(self, "Fertig", "Alle Rechnungen wurden erstellt.")
+            QMessageBox.information(self, tr("Fertig"), tr("Alle Rechnungen wurden erstellt."))
             return
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Mit Anmerkungen abgeschlossen")
-        box.setText(f"{len(problems)} Punkt(e) brauchen deine Aufmerksamkeit.")
+        box.setWindowTitle(tr("Mit Anmerkungen abgeschlossen"))
+        box.setText(tr("{n} Punkt(e) brauchen deine Aufmerksamkeit.", n=len(problems)))
         box.setDetailedText("\n\n".join(problems))
         box.exec_()
 
     def report_send_result(self, sent, failed, missing):
         """Summarise a mail run: what went out, what did not, and why."""
         box = QMessageBox(self)
-        box.setWindowTitle("Mailversand abgeschlossen")
+        box.setWindowTitle(tr("Mailversand abgeschlossen"))
         box.setIcon(QMessageBox.Warning if (failed or missing) else QMessageBox.Information)
-        lines = [f"Verschickt: {len(sent)}"]
+        lines = [tr("Verschickt: {n}", n=len(sent))]
         if missing:
-            lines.append(f"Ohne PDF übersprungen: {len(missing)}")
+            lines.append(tr("Ohne PDF übersprungen: {n}", n=len(missing)))
         if failed:
-            lines.append(f"Fehlgeschlagen: {len(failed)}")
+            lines.append(tr("Fehlgeschlagen: {n}", n=len(failed)))
         box.setText("\n".join(lines))
         details = []
         if sent:
-            details.append("Verschickt an:\n" + "\n".join(sent))
+            details.append(tr("Verschickt an:") + "\n" + "\n".join(sent))
         if missing:
-            details.append("Keine Rechnung gefunden:\n" + "\n".join(missing))
+            details.append(tr("Keine Rechnung gefunden:") + "\n" + "\n".join(missing))
         if failed:
-            details.append("Fehler:\n" + "\n".join(failed))
+            details.append(tr("Fehler:") + "\n" + "\n".join(failed))
         if details:
             box.setDetailedText("\n\n".join(details))
         box.exec_()
@@ -642,7 +648,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def import_invoice_data():
             print("import invoice data")
-            filepath = load_filepath(self, "Importiere Rechnungen von EEG Faktura", homedir=self.home_directory)
+            filepath = load_filepath(self, tr("Importiere Rechnungen von EEG Faktura"), homedir=self.home_directory)
             if filepath is None:
                 return
             invoicedata = self.invoices.load_data(filepath=filepath)
@@ -668,8 +674,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_data_changed()
 
         def select_template_invoice():
-            filepath = load_filepath(self, "Wähle die Vorlage für die Rechnungen aus",
-                                     filter="Word Dokument (*.docx)", homedir=self.home_directory)
+            filepath = load_filepath(self, tr("Wähle die Vorlage für die Rechnungen aus"),
+                                     filter=tr("Word Dokument (*.docx)"), homedir=self.home_directory)
             if filepath is not None:
                 load_template_invoice_from_fp(filepath)
 
@@ -684,7 +690,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_data_changed()
 
         def import_masterdata_data():
-            filepath = load_filepath(self, "Wähle die Stammdaten von EEG Faktura aus", homedir=self.home_directory)
+            filepath = load_filepath(self, tr("Wähle die Stammdaten von EEG Faktura aus"), homedir=self.home_directory)
             if filepath is not None:
                 loadp_masterdata_from_fp(filepath)
 
@@ -703,8 +709,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_data_changed()
 
         def import_energy_data(load_qov=False):
-            title = ("Wähle die QoV-Energiedaten für dieses Quartal aus" if load_qov
-                     else "Wähle die Energiedaten für dieses Quartal aus")
+            title = (tr("Wähle die QoV-Energiedaten für dieses Quartal aus") if load_qov
+                     else tr("Wähle die Energiedaten für dieses Quartal aus"))
             filepath = load_filepath(self, title, homedir=self.home_directory)
             if filepath is not None:
                 load_energydata_fp(filepath, load_qov=load_qov)
@@ -718,8 +724,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def import_email_template():
             # Was filtered on *.docx, but the email template is HTML.
-            filepath = load_filepath(self, "Wähle die Emailvorlage aus",
-                                     filter="HTML Datei (*.html *.htm)", homedir=self.home_directory)
+            filepath = load_filepath(self, tr("Wähle die Emailvorlage aus"),
+                                     filter=tr("HTML Datei (*.html *.htm)"), homedir=self.home_directory)
             if filepath is not None:
                 load_emaildata_fp(filepath)
 
@@ -751,22 +757,24 @@ class MainWindow(QtWidgets.QMainWindow):
         energy data, was previously invisible until the PDFs came out wrong.
         """
         if not self.invoicesdata_loaded or self.invoices.data is None:
-            self.status_header.setText("Keine Rechnungsdaten geladen - "
-                                       "zuerst rechts eine Datei laden.")
+            self.status_header.setText(tr("Keine Rechnungsdaten geladen - "
+                                          "zuerst rechts eine Datei laden."))
             self.status_header.setObjectName("statusHeaderIdle")
             self.status_header.style().polish(self.status_header)
             return
         invoice_list = self.invoices.data["list"]
         n_debit = int((invoice_list["Dokumenttyp"] == "Rechnung").sum())
         n_credit = len(invoice_list) - n_debit
-        energy = "Energiedaten geladen" if self.energydata.data is not None else "keine Energiedaten"
-        self.status_header.setText(
-            f"Abrechnung {self.thisinvoices_year} Q{self.thisinvoice_quart}  ·  "
-            f"{n_debit} Rechnungen, {n_credit} Gutschriften  ·  {energy}")
+        energy = (tr("Energiedaten geladen") if self.energydata.data is not None
+                  else tr("keine Energiedaten"))
+        self.status_header.setText(tr(
+            "Abrechnung {year} Q{quarter}  ·  {debit} Rechnungen, {credit} Gutschriften  ·  {energy}",
+            year=self.thisinvoices_year, quarter=self.thisinvoice_quart,
+            debit=n_debit, credit=n_credit, energy=energy))
         self.status_header.setObjectName("statusHeader")
         self.status_header.style().polish(self.status_header)
-        self.setWindowTitle(f"Faktura Infinity Addon - {self.thisinvoices_year} "
-                            f"Q{self.thisinvoice_quart}")
+        self.setWindowTitle(f'{tr("Faktura Infinity Addon")} - '
+                            f'{self.thisinvoices_year} Q{self.thisinvoice_quart}')
 
     def init_menubardata_Infinity(self):
 
@@ -779,7 +787,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.exportwindow is None:
                     #data check
 
-                    self.exportwindow = Subwindow("Exportiere .csv für SEPA")
+                    self.exportwindow = Subwindow(tr("Exportiere .csv für SEPA"))
                     # Tall enough to show a useful number of rows; the scroll
                     # area below handles the rest. No move() - a fixed position
                     # can put the window off-screen.
@@ -799,8 +807,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
                     # Add header labels to the header layout
                     header_label1 = QLabel("")
-                    header_label2 = QLabel("Name")
-                    header_label3 = QLabel("Betrag [€]")
+                    header_label2 = QLabel(tr("Name"))
+                    header_label3 = QLabel(tr("Betrag [€]"))
                     header_layout.addWidget(header_label1)
                     header_layout.addWidget(header_label2)
                     header_layout.addWidget(header_label3)
@@ -851,11 +859,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     label_credit = QLabel()
                     label_net = QLabel()
                     for row, (caption, widget) in enumerate([
-                            ("Lastschriften (Einzug)", label_debit),
-                            ("Überweisungen (Gutschrift)", label_credit),
-                            ("Netto", label_net)]):
+                            (tr("Lastschriften (Einzug)"), label_debit),
+                            (tr("Überweisungen (Gutschrift)"), label_credit),
+                            (tr("Netto"), label_net)]):
                         caption_label = QLabel(caption)
-                        if caption == "Netto":
+                        if widget is label_net:
                             caption_label.setStyleSheet("font-weight: 600;")
                             widget.setStyleSheet("font-weight: 600;")
                         widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -889,10 +897,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         invoices_selected_names, selected_names = select_invoice_positions(
                             self.invoices.data["list"], self.invoices.data["detailed"], selected_mask)
                         if selected_names.empty:
-                            QMessageBox.warning(self, "Keine Auswahl",
-                                                "Es ist niemand ausgewählt - es wird nichts exportiert.")
+                            QMessageBox.warning(self, tr("Keine Auswahl"),
+                                                tr("Es ist niemand ausgewählt - es wird nichts exportiert."))
                             return
-                        print(f"{len(selected_names)} von {len(selected_mask)} Empfänger:innen ausgewählt")
+                        print(tr("{n} von {total} Empfänger:innen ausgewählt", n=len(selected_names), total=len(selected_mask)))
 
                         exportingdebit,exportingtransfer,doublesprocess = produce_sepa_export_dfs(invoices_selected_names,self.config.get("EEG_name",""))
 
@@ -916,11 +924,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                 return True
                             except Exception as e:
                                 print(f"Saving {what} failed: {e}")
-                                QMessageBox.critical(self, "Speichern fehlgeschlagen",
-                                                     f"{what} konnten nicht gespeichert werden:\n{filepath}\n\n{e}")
+                                QMessageBox.critical(self, tr("Speichern fehlgeschlagen"),
+                                                     tr("{what} konnten nicht gespeichert werden:\n"
+                                                        "{path}\n\n{error}",
+                                                        what=what, path=filepath, error=e))
                                 return False
 
-                        filepath1 = load_filepath(self, "Wähle Speicherort für Export für SEPA Lastschrift aus",
+                        filepath1 = load_filepath(self, tr("Wähle Speicherort für Export für SEPA Lastschrift aus"),
                                                   filter="csv (*.csv)", fileex=False,
                                                   defaultfilename=f"Lastschriften_Infinity_export_{date_str}",
                                                   homedir=self.home_directory)
@@ -928,17 +938,17 @@ class MainWindow(QtWidgets.QMainWindow):
                         if exportingdebit is not None:
                             if filepath1 is None:
                                 return
-                            if not save_csv(exportingdebit, filepath1, "Lastschriften"):
+                            if not save_csv(exportingdebit, filepath1, tr("Lastschriften")):
                                 return
 
                         if exportingtransfer is not None:
                             homedir2 = os.path.dirname(filepath1) if filepath1 else self.home_directory
-                            filepath2 = load_filepath(self,"Wähle Speicherort für Export für Überweisungen aus",
+                            filepath2 = load_filepath(self,tr("Wähle Speicherort für Export für Überweisungen aus"),
                                                       filter="csv (*.csv)", fileex=False,
                                                       defaultfilename=f"Überweisungen_Infinity_export_{date_str}",
                                                       homedir=homedir2)
                             if filepath2 is not None:
-                                if not save_csv(exportingtransfer, filepath2, "Überweisungen"):
+                                if not save_csv(exportingtransfer, filepath2, tr("Überweisungen")):
                                     return
 
                         self.exportwindow.close()
@@ -954,17 +964,17 @@ class MainWindow(QtWidgets.QMainWindow):
                             checkbox.blockSignals(False)
                         refresh_totals()
 
-                    select_all = QPushButton("Alle auswählen")
-                    select_none = QPushButton("Keine")
+                    select_all = QPushButton(tr("Alle auswählen"))
+                    select_none = QPushButton(tr("Keine"))
                     select_all.clicked.connect(lambda: set_all_checked(True))
                     select_none.clicked.connect(lambda: set_all_checked(False))
                     selection_row = QHBoxLayout()
                     selection_row.addWidget(select_all)
                     selection_row.addWidget(select_none)
                     selection_row.addStretch(1)
-                    selection_row.addWidget(QLabel(f"{len(names)} Positionen"))
+                    selection_row.addWidget(QLabel(tr("{n} Positionen", n=len(names))))
 
-                    self.exportwindow.ok_button = QPushButton("Exportieren")
+                    self.exportwindow.ok_button = QPushButton(tr("Exportieren"))
                     self.exportwindow.ok_button.setObjectName("primaryButton")
                     self.exportwindow.ok_button.setDefault(True)
                     self.exportwindow.ok_button.pressed.connect(get_selected_names)
@@ -994,9 +1004,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
             else:
                 errorbox = QMessageBox()
-                text = "Für diesen Schritt müssen noch folgende Daten eingelesen werden:"
+                text = tr("Für diesen Schritt müssen noch folgende Daten eingelesen werden:")
                 for missing in datamissing:
-                    text += f"\n- {missing}"
+                    text += f"\n- {tr(missing)}"
                 errorbox.setText(text)
                 errorbox.exec_()
         def reload_table_view(tablenr,data):
@@ -1014,7 +1024,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.reload_table_view = reload_table_view
 
-        menubardata = [["Exportiere .csv Datei für Raiffeisen Infinity", "", export_csv, "sepa_export"]]
+        menubardata = [[tr("Exportiere .csv Datei für Raiffeisen Infinity"), "", export_csv, "sepa_export"]]
         # ["Importiere Rechnungdaten von EEG Faktura", "", import_invoice_data],
         # ["Lade Daten von SEPA Mandate", "", import_mandates],
         return menubardata
@@ -1050,9 +1060,9 @@ class MainWindow(QtWidgets.QMainWindow):
             print(f"Check was {check}, datamissing {datamissing}")
             if not check:
                 errorbox = QMessageBox()
-                text = "Für diesen Schritt müssen noch folgende Daten eingelesen werden:"
+                text = tr("Für diesen Schritt müssen noch folgende Daten eingelesen werden:")
                 for missing in datamissing:
-                    text += f"\n- {missing}"
+                    text += f"\n- {tr(missing)}"
                 errorbox.setText(text)
                 errorbox.exec_()
             else:
@@ -1162,8 +1172,8 @@ class MainWindow(QtWidgets.QMainWindow):
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Warning)
             box.setWindowTitle(title)
-            box.setText(f"Die Datenprüfung meldet {len(errors)} Fehler.")
-            box.setInformativeText("Trotzdem fortfahren?")
+            box.setText(tr("Die Datenprüfung meldet {n} Fehler.", n=len(errors)))
+            box.setInformativeText(tr("Trotzdem fortfahren?"))
             box.setDetailedText("\n".join(f"{f.category}: {f.message}" for f in errors))
             box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             box.setDefaultButton(QMessageBox.No)
@@ -1206,14 +1216,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 report_df = pd.DataFrame(report_list,columns = ["Start Datum", "End Datum", "Namen Übersicht", "Zeitraum Details","Namen Details", "ZP Details"])
                 if report_df.shape[0] == 0:
                     message = QMessageBox()
-                    text = "Überprüfung durchgeführt. \nAlle QoV Energiedaten sind mindestens L2"
+                    text = tr("Überprüfung durchgeführt. \nAlle QoV Energiedaten sind mindestens L2")
                     message.setText(text)
                     message.exec_()
                 else:
                     first_day = self.energydata.metadata.index[0].strftime("%Y_%m_%d")
                     last_day = self.energydata.metadata.index[-1].strftime("%Y_%m_%d")
                     savepath = load_filepath(self,
-                                             "Wo soll ich den Überprüfungsreport hinspeichern?",
+                                             tr("Wo soll ich den Überprüfungsreport hinspeichern?"),
                                              fileex=False,
                                              defaultfilename=f"Energydata_QoV_Report_{first_day}-{last_day}.xlsx",
                                              homedir=self.home_directory)
@@ -1230,22 +1240,24 @@ class MainWindow(QtWidgets.QMainWindow):
                     try:
                         report_df.to_excel(savepath)
                     except Exception as e:
-                        QMessageBox.critical(self, "Speichern fehlgeschlagen",
-                                             f"Der Report konnte nicht gespeichert werden:\n{savepath}\n\n{e}")
+                        QMessageBox.critical(self, tr("Speichern fehlgeschlagen"),
+                                             tr("{what} konnten nicht gespeichert werden:\n"
+                                                "{path}\n\n{error}",
+                                                what=tr("Report"), path=savepath, error=e))
                         return
                     if not open_in_default_app(savepath):
                         QMessageBox.information(
-                            self, "Report gespeichert",
-                            f"Der Überprüfungsreport wurde gespeichert:\n{savepath}\n\n"
-                            f"Er konnte nicht automatisch geöffnet werden.")
+                            self, tr("Report gespeichert"),
+                            tr("Der Überprüfungsreport wurde gespeichert:\n{path}\n\n"
+                               "Er konnte nicht automatisch geöffnet werden.", path=savepath))
 
 
 
             else:
                 errorbox = QMessageBox()
-                text = "Für diesen Schritt müssen noch folgende Daten eingelesen werden:"
+                text = tr("Für diesen Schritt müssen noch folgende Daten eingelesen werden:")
                 for missing in datamissing:
-                    text += f"\n- {missing}"
+                    text += f"\n- {tr(missing)}"
                 errorbox.setText(text)
                 errorbox.exec_()
 
@@ -1263,7 +1275,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not confirm_despite_errors("Rechnungen erstellen"):
                     return
                 # first create a dict with all the info for the invoice, then render the template, then do it for all persons.
-                self.safepath_this_invoices = load_filepath(self, "Wo sollen die Rechnungen gespeichert werden?", pathisdir=True,homedir= self.home_directory)
+                self.safepath_this_invoices = load_filepath(self, tr("Wo sollen die Rechnungen gespeichert werden?"), pathisdir=True,homedir= self.home_directory)
                 if self.safepath_this_invoices is not None:
                     print(f"Save to {self.safepath_this_invoices}")
                     # for loading screeen i need multithreading
@@ -1295,12 +1307,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     class StatusDialog(QDialog):
                         def __init__(self):
                             super().__init__()
-                            self.setWindowTitle("Rechnungen werden erstellt")
+                            self.setWindowTitle(tr("Rechnungen werden erstellt"))
                             self.setMinimumWidth(420)
-                            self.label = QLabel("Rechnungen werden vorbereitet...")
+                            self.label = QLabel(tr("Rechnungen werden vorbereitet..."))
                             self.bar = QtWidgets.QProgressBar()
                             self.bar.setRange(0, 0)     # indeterminate until the first update
-                            self.cancel_button = QPushButton("Abbrechen")
+                            self.cancel_button = QPushButton(tr("Abbrechen"))
                             self.cancel_button.clicked.connect(self.request_cancel)
                             layout = QVBoxLayout()
                             layout.addWidget(self.label)
@@ -1311,7 +1323,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         def request_cancel(self):
                             cancel_requested.set()
                             self.cancel_button.setEnabled(False)
-                            self.label.setText("Abbruch nach der laufenden Rechnung...")
+                            self.label.setText(tr("Abbruch nach der laufenden Rechnung..."))
 
                         def update_progress(self, message, done, total):
                             self.label.setText(message)
@@ -1369,9 +1381,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
             else:
                 errorbox = QMessageBox()
-                text = "Für diesen Schritt müssen noch folgende Daten eingelesen werden:"
+                text = tr("Für diesen Schritt müssen noch folgende Daten eingelesen werden:")
                 for missing in datamissing:
-                    text += f"\n- {missing}"
+                    text += f"\n- {tr(missing)}"
                 errorbox.setText(text)
                 errorbox.exec_()
 
@@ -1388,9 +1400,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 personswithinvoicesmasterdata = members_with_invoices(
                     self.masterdata.data, self.invoices.data["detailed"])
                 if personswithinvoicesmasterdata.empty:
-                    QMessageBox.information(self, "Keine Empfänger:innen",
-                                            "Zu den geladenen Rechnungen wurde niemand in den "
-                                            "Stammdaten gefunden.")
+                    QMessageBox.information(self, tr("Keine Empfänger:innen"),
+                                            tr("Zu den geladenen Rechnungen wurde niemand in den "
+                                               "Stammdaten gefunden."))
                     return
 
                 def try_logging_in_f(user, pw, host):
@@ -1418,11 +1430,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     selected_persons = mailadressselection.result
                     personswithinvoicesselected = personswithinvoicesmasterdata.loc[selected_persons,:]
                     if personswithinvoicesselected.empty:
-                        QMessageBox.information(self, "Keine Auswahl", "Es wurde niemand ausgewählt.")
+                        QMessageBox.information(self, tr("Keine Auswahl"), tr("Es wurde niemand ausgewählt."))
                         return
 
                     if not self.safepath_this_invoices:
-                        self.safepath_this_invoices = load_filepath(self, "In welchem Ordner sind die ganzen Rechnungen gespeichert?", pathisdir=True,homedir= self.home_directory)
+                        self.safepath_this_invoices = load_filepath(self, tr("In welchem Ordner sind die ganzen Rechnungen gespeichert?"), pathisdir=True,homedir= self.home_directory)
                     if not self.safepath_this_invoices:
                         print("No invoice folder selected - aborting")
                         return
@@ -1509,20 +1521,19 @@ class MainWindow(QtWidgets.QMainWindow):
                     mail_adresse = self.config.get("my_mail", "(nicht gesetzt)")
                     mail_server = self.config.get("imap_server", "(nicht gesetzt)")
                     errorbox = QMessageBox()
-                    errorbox.setWindowTitle("Anmeldung fehlgeschlagen")
-                    text = ("Anmeldung beim Mailserver nicht möglich."
-                            f"\n\nMail Adresse: {mail_adresse}"
-                            f"\nServer: {mail_server}"
-                            "\n\nDas Passwort wurde abgelehnt. Bitte in den Einstellungen prüfen.")
+                    errorbox.setWindowTitle(tr("Anmeldung fehlgeschlagen"))
+                    text = (tr("Anmeldung beim Mailserver nicht möglich.")
+                            + f"\n\nMail: {mail_adresse}\nServer: {mail_server}\n\n"
+                            + tr("Das Passwort wurde abgelehnt. Bitte in den Einstellungen prüfen."))
                     for missing in datamissing:
                         text += f"\n- {missing}"
                     errorbox.setText(text)
                     errorbox.exec_()
             else:
                 errorbox = QMessageBox()
-                text = "Für diesen Schritt müssen noch folgende Daten eingelesen werden:"
+                text = tr("Für diesen Schritt müssen noch folgende Daten eingelesen werden:")
                 for missing in datamissing:
-                    text += f"\n- {missing}"
+                    text += f"\n- {tr(missing)}"
                 errorbox.setText(text)
                 errorbox.exec_()
 
@@ -1530,10 +1541,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 #     # MailAdressSelection(self.emails, "An welche Mailadressen soll ich die Rechnungen schicken")
         # when we have api capabilities we can use this
         # ["Login in EEG Faktura", "", login_eeg_faktura],
-        menubardata = [["Daten prüfen", "", run_validation, "validate"],
-                       ["Überprüfe die Qualität der Energiedaten", "", check_energydata, "check_energy"],
-                       ["Erstelle alle Rechnungen", "", create_invoices_and_save, "create_invoices"],
-                       ["Verschicke die Rechnungen per Mail", "", send_invoices_mail, "send_mail"],
+        menubardata = [[tr("Daten prüfen"), "", run_validation, "validate"],
+                       [tr("Überprüfe die Qualität der Energiedaten"), "", check_energydata, "check_energy"],
+                       [tr("Erstelle alle Rechnungen"), "", create_invoices_and_save, "create_invoices"],
+                       [tr("Verschicke die Rechnungen per Mail"), "", send_invoices_mail, "send_mail"],
                        ]
         return menubardata
 
@@ -1556,14 +1567,14 @@ def install_exception_dialog():
         try:
             box = QMessageBox()
             box.setIcon(QMessageBox.Critical)
-            box.setWindowTitle("Unerwarteter Fehler")
-            box.setText("Es ist ein unerwarteter Fehler aufgetreten.\n\n"
-                        f"{exctype.__name__}: {value}")
-            box.setInformativeText("Über 'Details anzeigen' bekommst du den vollen Fehlerbericht - "
-                                   "bitte diesen beim Melden mitschicken.")
+            box.setWindowTitle(tr("Unerwarteter Fehler"))
+            box.setText(tr("Es ist ein unerwarteter Fehler aufgetreten.\n\n{type}: {message}",
+                           type=exctype.__name__, message=value))
+            box.setInformativeText(tr("Über 'Details anzeigen' bekommst du den vollen "
+                                      "Fehlerbericht - bitte diesen beim Melden mitschicken."))
             box.setDetailedText(details)
-            copy_button = box.addButton("Fehlerbericht kopieren", QMessageBox.ActionRole)
-            box.addButton("Weiter", QMessageBox.AcceptRole)
+            copy_button = box.addButton(tr("Fehlerbericht kopieren"), QMessageBox.ActionRole)
+            box.addButton(tr("Weiter"), QMessageBox.AcceptRole)
             box.exec_()
             if box.clickedButton() is copy_button:
                 QtWidgets.QApplication.clipboard().setText(details)
@@ -1579,6 +1590,8 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("FakturaAddon")
     app.setOrganizationName("Energiegemeinschaft")
+    # Before any widget exists - tr() is called while they are constructed.
+    i18n.set_language(load_env().get("language", i18n.DEFAULT_LANGUAGE))
     app.setWindowIcon(QtGui.QIcon(theme.logo_path()))
     app.setStyleSheet(theme.STYLESHEET)
     install_exception_dialog()

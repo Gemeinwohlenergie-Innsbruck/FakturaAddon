@@ -27,7 +27,14 @@ HOME_DIRECTORY=...
 EEG_NAME=...
 TEMPLATE_EXPORT_INVOICE=templates/template_invoice_clean.docx
 TEMPLATE_EMAIL=templates/email_template_clean.html
+MAIL_SMTP_SERVER=...
+MAIL_SMTP_PORT=587
+LANGUAGE=de
 ```
+
+`LANGUAGE` is `de` or `en` and changes the operator's UI only — invoices and
+the mails members receive stay German. Everything here is editable from
+**Einstellungen** (Ctrl+,), which can also test the mail login.
 
 **`.env` holds passwords in plain text and is gitignored. Never commit it.**
 
