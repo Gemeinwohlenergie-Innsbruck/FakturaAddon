@@ -557,6 +557,7 @@ class SendPreviewDialog(QDialog):
         cancel = QPushButton("Abbrechen")
         cancel.clicked.connect(self.reject)
         self.send_button = QPushButton(f"{plural(len(jobs))} verschicken")
+        self.send_button.setObjectName("primaryButton")
         self.send_button.setDefault(True)
         self.send_button.setEnabled(bool(jobs))
         self.send_button.clicked.connect(self.confirm)

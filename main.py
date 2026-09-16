@@ -19,6 +19,7 @@ from exporting import produce_sepa_export_dfs, produce_invoices_and_save
 from selection import select_invoice_positions, members_with_invoices
 from config import ENV_PATH, load_env
 import validation
+import theme
 from exporting import resolve_name_in_energydata
 from PyQt5.QtWidgets import QHBoxLayout
 import datetime as dt
@@ -155,11 +156,11 @@ class FileLoadPanel(QtWidgets.QWidget):
         if path:
             label.setText(f"✓ {os.path.basename(path)}")
             label.setToolTip(path)
-            label.setStyleSheet("color: palette(text);")
+            label.setStyleSheet(f"color: {theme.OK};")
         else:
             label.setText("nicht geladen")
             label.setToolTip("")
-            label.setStyleSheet("color: palette(mid);")
+            label.setStyleSheet(f"color: {theme.MUTED};")
 
     def path(self, key):
         return self._paths.get(key, "")
@@ -171,9 +172,9 @@ class ValidationDialog(QDialog):
     SEVERITY_LABEL = {validation.ERROR: "Fehler",
                       validation.WARNING: "Warnung",
                       validation.INFO: "Hinweis"}
-    SEVERITY_COLOUR = {validation.ERROR: "#a4283a",
-                       validation.WARNING: "#a6571f",
-                       validation.INFO: "#2f6fa8"}
+    SEVERITY_COLOUR = {validation.ERROR: theme.ERROR,
+                       validation.WARNING: theme.WARNING,
+                       validation.INFO: theme.BLUE}
 
     def __init__(self, findings, parent=None):
         super().__init__(parent)
@@ -264,6 +265,7 @@ class WorkflowPanel(QtWidgets.QWidget):
             marker = QLabel("○")
             marker.setFixedWidth(16)
             button = QPushButton(f"{row + 1}. {title}" + ("  (optional)" if optional else ""))
+            button.setObjectName("stepButton")
             button.setMinimumWidth(240)
             reason = QLabel("")
             reason.setWordWrap(True)
@@ -283,17 +285,25 @@ class WorkflowPanel(QtWidgets.QWidget):
         """missing: labels of inputs not yet loaded. done: step has been run."""
         ready = not missing
         self._buttons[key].setEnabled(ready)
+        marker = self._markers[key]
+        button = self._buttons[key]
+        button.setProperty("done", "true" if done and not missing else "false")
+        button.style().unpolish(button)
+        button.style().polish(button)
         if missing:
             reason = "wartet auf: " + ", ".join(missing)
-            self._markers[key].setText("○")
+            marker.setText("○")
+            marker.setStyleSheet(f"color: {theme.MUTED};")
             self._buttons[key].setToolTip(reason)
         elif done:
             reason = "erledigt"
-            self._markers[key].setText("✓")
+            marker.setText("✓")
+            marker.setStyleSheet(f"color: {theme.OK}; font-weight: 600;")
             self._buttons[key].setToolTip("")
         else:
             reason = "bereit"
-            self._markers[key].setText("▶")
+            marker.setText("▶")
+            marker.setStyleSheet(f"color: {theme.ORANGE_DARK}; font-weight: 600;")
             self._buttons[key].setToolTip("")
         self._reasons[key].setText(reason)
 
@@ -392,9 +402,7 @@ class MainWindow(QtWidgets.QMainWindow):
             close_action.triggered.connect(self.close)
             infinity_menu.addAction(close_action)
 
-        self.status_header = QLabel()
-        self.status_header.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.overallverticallayout.addWidget(self.status_header)
+        self.overallverticallayout.addWidget(self.build_header())
 
         self.horizontalLayout = QtWidgets.QHBoxLayout()
         self.verticalLayout0 = QtWidgets.QVBoxLayout()  # left: consumer data
@@ -417,18 +425,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.horizontalLayout.addLayout(self.verticalLayout1)
         self.horizontalLayout.addLayout(self.verticalLayout0)
-        self.verticalLayout0.addWidget(QLabel("Rechnungsdaten KonsumentInnen"))
+        self.verticalLayout0.addWidget(self.section_label("Rechnungsdaten KonsumentInnen"))
         self.verticalLayout0.addWidget(self.table_0_0)
-        self.verticalLayout0.addWidget(QLabel("Energiedaten"))
+        self.verticalLayout0.addWidget(self.section_label("Energiedaten"))
         self.verticalLayout0.addWidget(self.table_0_1)
         self.verticalLayout0.setStretch(1, 7)
         self.verticalLayout0.setStretch(3, 7)
 
-        self.verticalLayout1.addWidget(QLabel("Rechnungsdaten ProduzentInnen"))
+        self.verticalLayout1.addWidget(self.section_label("Rechnungsdaten ProduzentInnen"))
         self.verticalLayout1.addWidget(self.table_1_0)
-        self.verticalLayout1.addWidget(QLabel("Dateien laden"))
+        self.verticalLayout1.addWidget(self.section_label("Dateien laden"))
         self.verticalLayout1.addWidget(self.filepanel)
-        self.verticalLayout1.addWidget(QLabel("Ablauf"))
+        self.verticalLayout1.addWidget(self.section_label("Ablauf"))
         self.verticalLayout1.addWidget(self.workflow)
         self.verticalLayout1.setStretch(1, 7)
         self.verticalLayout1.setStretch(3, 4)
@@ -439,6 +447,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self.update_status_header()
         self.refresh_workflow()
         self.restore_geometry()
+
+    def section_label(self, text):
+        label = QLabel(text)
+        label.setObjectName("sectionLabel")
+        return label
+
+    def build_header(self):
+        """Letterhead band: the logo, then what is currently loaded.
+
+        Same mark and same orange as the invoices the app produces, so the
+        window and its output look like they come from the same place.
+        """
+        band = QWidget()
+        band.setObjectName("headerWidget")
+        row = QHBoxLayout(band)
+        row.setContentsMargins(12, 8, 12, 8)
+        row.setSpacing(14)
+
+        logo = QLabel()
+        pixmap = QtGui.QPixmap(theme.logo_path())
+        if not pixmap.isNull():
+            # Stored at 2x for HiDPI; display at 40px tall.
+            logo.setPixmap(pixmap.scaledToHeight(40, Qt.SmoothTransformation))
+        else:
+            # Missing asset must not cost us the header.
+            logo.setText("Gemeinwohl Energie Innsbruck")
+            logo.setStyleSheet(f"color: {theme.INK}; font-weight: 600;")
+        row.addWidget(logo)
+
+        self.status_header = QLabel()
+        self.status_header.setObjectName("statusHeaderIdle")
+        self.status_header.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        row.addWidget(self.status_header, 1)
+        return band
 
     def restore_geometry(self):
         """Reopen where the user left the window.
@@ -672,7 +714,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.invoicesdata_loaded or self.invoices.data is None:
             self.status_header.setText("Keine Rechnungsdaten geladen - "
                                        "zuerst rechts eine Datei laden.")
-            self.status_header.setStyleSheet("color: palette(mid); padding: 4px;")
+            self.status_header.setObjectName("statusHeaderIdle")
+            self.status_header.style().polish(self.status_header)
             return
         invoice_list = self.invoices.data["list"]
         n_debit = int((invoice_list["Dokumenttyp"] == "Rechnung").sum())
@@ -681,7 +724,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_header.setText(
             f"Abrechnung {self.thisinvoices_year} Q{self.thisinvoice_quart}  ·  "
             f"{n_debit} Rechnungen, {n_credit} Gutschriften  ·  {energy}")
-        self.status_header.setStyleSheet("font-weight: 600; padding: 4px;")
+        self.status_header.setObjectName("statusHeader")
+        self.status_header.style().polish(self.status_header)
+        self.setWindowTitle(f"Faktura Infinity Addon - {self.thisinvoices_year} "
+                            f"Q{self.thisinvoice_quart}")
 
     def init_menubardata_Infinity(self):
 
@@ -879,7 +925,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     selection_row.addStretch(1)
                     selection_row.addWidget(QLabel(f"{len(names)} Positionen"))
 
-                    self.exportwindow.ok_button = QPushButton("OK")
+                    self.exportwindow.ok_button = QPushButton("Exportieren")
+                    self.exportwindow.ok_button.setObjectName("primaryButton")
                     self.exportwindow.ok_button.setDefault(True)
                     self.exportwindow.ok_button.pressed.connect(get_selected_names)
 
@@ -1488,6 +1535,8 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("FakturaAddon")
     app.setOrganizationName("Energiegemeinschaft")
+    app.setWindowIcon(QtGui.QIcon(theme.logo_path()))
+    app.setStyleSheet(theme.STYLESHEET)
     install_exception_dialog()
     window = MainWindow()
     window.show()

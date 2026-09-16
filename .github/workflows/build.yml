@@ -45,6 +45,7 @@ jobs:
           --name "EEGApp"
           --add-data "templates/email_template_clean.html;templates"
           --add-data "templates/template_invoice_clean.docx;templates"
+          --add-data "assets/gei_logo.png;assets"
           main.py
 
       - name: Copy templates next to EXE
