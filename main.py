@@ -20,7 +20,8 @@ from config import ENV_PATH, load_env
 from PyQt5.QtWidgets import QHBoxLayout
 import datetime as dt
 import imaplib
-from emailing import MailSelection, LoginPrompt, selectmail, MailAdressSelection, Sendapproval, send_mail_to_one_person
+from emailing import (MailSelection, LoginPrompt, selectmail, MailAdressSelection,
+                      send_mail_to_one_person, build_invoice_email, SendPreviewDialog)
 import email
 from email.header import decode_header
 
@@ -161,6 +162,64 @@ class FileLoadPanel(QtWidgets.QWidget):
         return self._paths.get(key, "")
 
 
+class WorkflowPanel(QtWidgets.QWidget):
+    """The quarterly sequence, as an actual sequence.
+
+    The menus gave two unrelated groups of always-enabled actions, so the order
+    of the work lived only in people's heads: you clicked "Verschicke die
+    Rechnungen" and found out afterwards, via a dialog, what was missing. Each
+    step here is enabled only once its inputs exist, and says what it is
+    waiting for while it is not.
+    """
+
+    def __init__(self, steps, parent=None):
+        super().__init__(parent)
+        self._buttons = {}
+        self._markers = {}
+        self._reasons = {}
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 0)
+        grid.setColumnStretch(2, 1)
+        for row, (key, title, optional) in enumerate(steps):
+            marker = QLabel("○")
+            marker.setFixedWidth(16)
+            button = QPushButton(f"{row + 1}. {title}" + ("  (optional)" if optional else ""))
+            button.setMinimumWidth(240)
+            reason = QLabel("")
+            reason.setWordWrap(True)
+            reason.setStyleSheet("color: palette(mid);")
+            grid.addWidget(marker, row, 0)
+            grid.addWidget(button, row, 1)
+            grid.addWidget(reason, row, 2)
+            self._markers[key] = marker
+            self._buttons[key] = button
+            self._reasons[key] = reason
+        grid.setRowStretch(len(steps), 1)
+
+    def set_handler(self, key, handler):
+        self._buttons[key].clicked.connect(handler)
+
+    def set_state(self, key, missing, done):
+        """missing: labels of inputs not yet loaded. done: step has been run."""
+        ready = not missing
+        self._buttons[key].setEnabled(ready)
+        if missing:
+            reason = "wartet auf: " + ", ".join(missing)
+            self._markers[key].setText("○")
+            self._buttons[key].setToolTip(reason)
+        elif done:
+            reason = "erledigt"
+            self._markers[key].setText("✓")
+            self._buttons[key].setToolTip("")
+        else:
+            reason = "bereit"
+            self._markers[key].setText("▶")
+            self._buttons[key].setToolTip("")
+        self._reasons[key].setText(reason)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
@@ -209,15 +268,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_menu(self, menubar, title, entries):
         menu = menubar.addMenu(title)
-        for label, shortcut, handler in entries:
+        for entry in entries:
+            label, shortcut, handler = entry[0], entry[1], entry[2]
+            key = entry[3] if len(entry) > 3 else None
             action = QtWidgets.QAction(label, self)
-            action.triggered.connect(handler)
+            action.triggered.connect(self._wrap_step(handler))
             if shortcut:
                 action.setShortcut(shortcut)
             menu.addAction(action)
+            if key:
+                # Kept so refresh_workflow can enable and disable them in step
+                # with the workflow panel.
+                self.menu_actions[key] = action
         return menu
 
+    def _wrap_step(self, handler):
+        """Run a step, then re-evaluate what is possible next."""
+        def run(*_):
+            handler()
+            self.refresh_workflow()
+        return run
+
     def init_Ui(self):
+        self.menu_actions = {}
+        self.completed_steps = set()
         self.centralwidget = QtWidgets.QWidget(self)
         self.overallverticallayout = QtWidgets.QVBoxLayout(self.centralwidget)
 
@@ -251,6 +325,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table_0_1 = TableView()
         self.table_1_0 = TableView()
         self.filepanel = FileLoadPanel(self.FILE_ROWS)
+
+        # Built before init_loading_functionality, because its auto-load of the
+        # .env templates immediately calls back into on_data_changed().
+        self.workflow = WorkflowPanel(self.WORKFLOW_STEPS)
+        step_handlers = {entry[3]: entry[2]
+                         for entry in (self.menubardata_Make_invoices or []) + (self.menubardata_Infinity or [])
+                         if len(entry) > 3}
+        for key, handler in step_handlers.items():
+            self.workflow.set_handler(key, self._wrap_step(handler))
+
         self.init_loading_functionality(self.filepanel)
 
         self.horizontalLayout.addLayout(self.verticalLayout1)
@@ -266,12 +350,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.verticalLayout1.addWidget(self.table_1_0)
         self.verticalLayout1.addWidget(QLabel("Dateien laden"))
         self.verticalLayout1.addWidget(self.filepanel)
+        self.verticalLayout1.addWidget(QLabel("Ablauf"))
+        self.verticalLayout1.addWidget(self.workflow)
         self.verticalLayout1.setStretch(1, 7)
         self.verticalLayout1.setStretch(3, 4)
+        self.verticalLayout1.setStretch(5, 3)
 
         self.overallverticallayout.addLayout(self.horizontalLayout)
         self.setCentralWidget(self.centralwidget)
         self.update_status_header()
+        self.refresh_workflow()
         self.restore_geometry()
 
     def restore_geometry(self):
@@ -287,6 +375,54 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         QSettings().setValue("window/geometry", self.saveGeometry())
         super().closeEvent(event)
+
+    # (key, title, optional) - the quarterly sequence, in order.
+    WORKFLOW_STEPS = [
+        ("check_energy",    "Datenqualität prüfen",      True),
+        ("create_invoices", "Rechnungen erstellen",      False),
+        ("send_mail",       "Rechnungen verschicken",    False),
+        ("sepa_export",     "SEPA-Export für Infinity",  False),
+    ]
+
+    def step_requirements(self):
+        """What each step is waiting for, evaluated fresh on every refresh."""
+        has_invoices = self.invoices.data is not None
+        has_master = self.masterdata.data is not None
+        has_energy = self.energydata.data is not None
+        has_qov = self.energydata.metadata is not None
+        has_invoice_template = self.invoices.template is not None
+        has_mail_template = self.emails.template is not None
+        return {
+            "check_energy": [] if has_qov else ["Quartalsenergiedaten QoV"],
+            # Energiedaten belongs here: produce_invoices_and_save dereferences
+            # it unconditionally, so starting without it used to blow up inside
+            # the worker rather than being refused up front.
+            "create_invoices": [label for label, ok in [
+                ("Rechnungsdaten", has_invoices),
+                ("Stammdaten", has_master),
+                ("Energiedaten", has_energy),
+                ("Rechnungsvorlage", has_invoice_template)] if not ok],
+            "send_mail": [label for label, ok in [
+                ("Rechnungsdaten", has_invoices),
+                ("Stammdaten", has_master),
+                ("Emailvorlage", has_mail_template)] if not ok],
+            "sepa_export": [] if has_invoices else ["Rechnungsdaten"],
+        }
+
+    def mark_step_done(self, key):
+        self.completed_steps.add(key)
+        self.refresh_workflow()
+
+    def refresh_workflow(self):
+        """Keep the step list and the menu entries agreeing about what is possible."""
+        requirements = self.step_requirements()
+        for key, _, _ in self.WORKFLOW_STEPS:
+            missing = requirements.get(key, [])
+            self.workflow.set_state(key, missing, key in self.completed_steps)
+            action = self.menu_actions.get(key)
+            if action is not None:
+                action.setEnabled(not missing)
+                action.setToolTip("wartet auf: " + ", ".join(missing) if missing else "")
 
     def init_data(self):
         #self.mandates = mandates
@@ -361,14 +497,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.reload_table_view("1_0", transfer)
             panel.set_path("invoices", filepath)
             self.invoicesdata_loaded = True
-            self.update_status_header()
+            self.on_data_changed()
 
         def load_template_invoice_from_fp(filepath):
             if not filepath:
                 return
             if self.invoices.load_template(filepath=filepath) is not None:
                 panel.set_path("invoice_template", filepath)
-                self.update_status_header()
+                self.on_data_changed()
 
         def select_template_invoice():
             filepath = load_filepath(self, "Wähle die Vorlage für die Rechnungen aus",
@@ -384,7 +520,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.emails.load_data(filepath=filepath)
             if loaded is not None:
                 panel.set_path("masterdata", filepath)
-                self.update_status_header()
+                self.on_data_changed()
 
         def import_masterdata_data():
             filepath = load_filepath(self, "Wähle die Stammdaten von EEG Faktura aus", homedir=self.home_directory)
@@ -403,7 +539,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if loaded is not None:
                 self.reload_table_view("0_1", loaded)
                 panel.set_path(key, filepath)
-                self.update_status_header()
+                self.on_data_changed()
 
         def import_energy_data(load_qov=False):
             title = ("Wähle die QoV-Energiedaten für dieses Quartal aus" if load_qov
@@ -417,7 +553,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             if self.emails.load_template(filepath=filepath) is not None:
                 panel.set_path("email_template", filepath)
-                self.update_status_header()
+                self.on_data_changed()
 
         def import_email_template():
             # Was filtered on *.docx, but the email template is HTML.
@@ -441,6 +577,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # empty path, so an install with no templates configured still starts.
         load_template_invoice_from_fp(self.config.get("template_export_invoice", ""))
         load_emaildata_fp(self.config.get("template_email", ""))
+
+    def on_data_changed(self):
+        """A file was loaded: re-evaluate the header and which steps are possible."""
+        self.update_status_header()
+        self.refresh_workflow()
 
     def update_status_header(self):
         """One line saying which quarter is loaded and how much of it.
@@ -637,6 +778,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
                         self.exportwindow.close()
                         self.exportwindow = None   # otherwise the menu entry needs two clicks next time
+                        self.mark_step_done("sepa_export")
                         return selected_names
 
 
@@ -706,8 +848,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.reload_table_view = reload_table_view
 
-        menubardata = [
-                            ["Exportiere .csv Datei für Raiffeisen Infinity", "", export_csv]]
+        menubardata = [["Exportiere .csv Datei für Raiffeisen Infinity", "", export_csv, "sepa_export"]]
         # ["Importiere Rechnungdaten von EEG Faktura", "", import_invoice_data],
         # ["Lade Daten von SEPA Mandate", "", import_mandates],
         return menubardata
@@ -1028,6 +1169,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # a dialog that closed early would have reported a clean run
                     # even when members were skipped.
                     self.report_invoice_problems(worker.problems)
+                    self.mark_step_done("create_invoices")
                 else:
                     print("no fp selected")
 
@@ -1084,14 +1226,6 @@ class MainWindow(QtWidgets.QMainWindow):
                         QMessageBox.information(self, "Keine Auswahl", "Es wurde niemand ausgewählt.")
                         return
 
-                    sendapproval = Sendapproval(personswithinvoicesselected["E-Mail"], title="Wähle die Personen aus, denen du eine Mail schreiben willst")
-                    if not sendapproval.exec_():
-                        print("Dialog canceled")
-                        return
-                    if not sendapproval.result:
-                        print("Dont send")
-                        return
-
                     if not self.safepath_this_invoices:
                         self.safepath_this_invoices = load_filepath(self, "In welchem Ordner sind die ganzen Rechnungen gespeichert?", pathisdir=True,homedir= self.home_directory)
                     if not self.safepath_this_invoices:
@@ -1106,24 +1240,44 @@ class MainWindow(QtWidgets.QMainWindow):
                     # PDF used to surface as FileNotFoundError partway through,
                     # after some members had already been mailed.
                     jobs, missing = [], []
+                    preview_rows, missing_rows = [], []
                     for _, person_data in personswithinvoicesselected.iterrows():
+                        display = f"{person_data['Name 1']} {person_data['Name 2']}"
                         receivername = f"{person_data['Name 1']}_{person_data['Name 2']}"
                         nameinvoicefile = f"Rechnung_{self.thisinvoices_year}_q{self.thisinvoice_quart}_{receivername}.pdf"
                         fpinvoicefile = os.path.join(self.safepath_this_invoices, nameinvoicefile)
                         if os.path.exists(fpinvoicefile):
                             jobs.append((person_data, fpinvoicefile))
+                            preview_rows.append((display, person_data["E-Mail"], fpinvoicefile))
                         else:
                             missing.append(f"{person_data['E-Mail']}: {nameinvoicefile} nicht gefunden")
+                            missing_rows.append((display, person_data["E-Mail"], nameinvoicefile))
 
-                    if missing:
-                        proceed = QMessageBox.question(
-                            self, "Rechnungen fehlen",
-                            f"Für {len(missing)} von {len(personswithinvoicesselected)} Personen wurde "
-                            f"keine PDF-Rechnung gefunden.\n\nSoll ich die übrigen {len(jobs)} trotzdem "
-                            f"verschicken?",
-                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                        if proceed != QMessageBox.Yes:
-                            return
+                    jobs_by_address = {person_data["E-Mail"]: (person_data, path)
+                                       for person_data, path in jobs}
+
+                    def build_preview(address):
+                        """Compose the real message and pull its subject, HTML and attachment.
+
+                        Built by build_invoice_email, the same function the send
+                        uses, so the preview cannot drift from what goes out.
+                        """
+                        person_data, path = jobs_by_address[address]
+                        message = build_invoice_email(
+                            self.config.get("my_mail", ""), self.config.get("EEG_name", ""),
+                            address, person_data["Name 1"],
+                            self.thisinvoice_quart, self.thisinvoices_year,
+                            self.emails.template, path, self.masterdata)
+                        html = ""
+                        for part in message.walk():
+                            if part.get_content_type() == "text/html":
+                                html = part.get_content()
+                        return message["Subject"], html, os.path.basename(path)
+
+                    preview = SendPreviewDialog(preview_rows, missing_rows, build_preview, parent=self)
+                    if not preview.exec_() or not preview.result:
+                        print("Send cancelled in the preview dialog")
+                        return
 
                     sent, failed = [], []
                     for person_data, fpinvoicefile in jobs:
@@ -1139,6 +1293,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             failed.append(f"{person_data['E-Mail']}: {e}")
 
                     self.report_send_result(sent, failed, missing)
+                    self.mark_step_done("send_mail")
 
                 else:
                     # Never echo the password here - this dialog is exactly what
@@ -1167,7 +1322,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 #     # MailAdressSelection(self.emails, "An welche Mailadressen soll ich die Rechnungen schicken")
         # when we have api capabilities we can use this
         # ["Login in EEG Faktura", "", login_eeg_faktura],
-        menubardata = [["Überprüfe die Qualität der Energiedaten","",check_energydata],["Erstelle alle Rechnungen", "", create_invoices_and_save],["Verschicke die Rechnungen per Mail", "", send_invoices_mail],["Einstellungen", "", change_Settings]]
+        menubardata = [["Überprüfe die Qualität der Energiedaten", "", check_energydata, "check_energy"],
+                       ["Erstelle alle Rechnungen", "", create_invoices_and_save, "create_invoices"],
+                       ["Verschicke die Rechnungen per Mail", "", send_invoices_mail, "send_mail"],
+                       ["Einstellungen", "", change_Settings]]
         return menubardata
 
 

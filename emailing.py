@@ -1,5 +1,10 @@
 from bs4 import BeautifulSoup
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout,QListWidget, QPushButton, QLabel, QScrollArea, QTextEdit, QFormLayout, QLineEdit, QGridLayout, QCheckBox, QDialog
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton,
+                             QLabel, QScrollArea, QTextEdit, QTextBrowser, QFormLayout,
+                             QLineEdit, QGridLayout, QCheckBox, QDialog, QSplitter,
+                             QTableWidget, QTableWidgetItem, QAbstractItemView)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QBrush, QColor
 import email
 from email.header import decode_header
 from email.mime.text import MIMEText
@@ -346,36 +351,52 @@ class MailAdressSelection(QDialog):
 
 
 
-class Sendapproval(QDialog):
+def render_invoice_mail_body(template, receiver_forename, invquart, invyear, masterdata):
+    """Render the HTML body of an invoice mail.
+
+    metadata is read with .get(): a community sheet missing one optional field
+    (Geschäftsnummer, say) used to raise KeyError and take down the whole run.
     """
-    This "window" is a QWidget. If it has no parent, it
-    will appear as a free-floating window as we want.
+    meta = masterdata.metadata or {}
+    return template.render(name=receiver_forename,
+                           quart=invquart,
+                           year=invyear,
+                           community_name=meta.get('Bezeichnung', ''),
+                           community_companynumber=meta.get('Geschäftsnummer', ''),
+                           community_citycode=meta.get('PLZ', ''),
+                           community_city=meta.get('Wohnort', ''),
+                           community_street=meta.get('Straße', ''),
+                           community_streetnr=meta.get('StraßenNr.', ''),
+                           community_mail=meta.get('E-Mail', ''),
+                           community_website=meta.get('Web Seite', ''),
+                           community_IBAN=meta.get('IBAN', ''))
+
+
+def build_invoice_email(sender_email, sender_name, receiver_email, receiver_forename,
+                        invquart, invyear, template, fp_to_invoice, masterdata):
+    """Compose the message that will go out.
+
+    Shared by the preview dialog and the send, so what the user approves is
+    built by the same code that sends it - a preview assembled separately
+    would only be a picture of what we hope happens.
     """
-    def __init__(self,emails, title = ""):
-        super().__init__()
-        self.setWindowTitle(title)
+    email = EmailMessage()
+    email['Subject'] = f"Rechnung {sender_name} {invyear} Quartal {invquart}"
+    email['From'] = sender_email
+    email['To'] = receiver_email
 
-        print("Check")
-        self.resize(800, 400)
-        self.move(200,200)
-        layout = QVBoxLayout()
-        sublayout = QHBoxLayout()
-        layout.addWidget(QLabel(f"Soll ich den folgenden Personen ein Mail mit deren Rechnungen schreiben? \n{emails}"))
-        self.yesbut = QPushButton("Ja")
-        self.nobut = QPushButton("Nein")
-        sublayout.addWidget(self.yesbut)
-        sublayout.addWidget(self.nobut)
-        layout.addLayout(sublayout)
+    html_body = render_invoice_mail_body(template, receiver_forename, invquart, invyear, masterdata)
+    plain_content = (f"Hallo {receiver_forename}. \nAnbei findest du deine Rechnung für das "
+                     f"{invquart}, {invyear} \n Mit lieben Grüßen, \n{sender_name} \n\n|")
+    email.set_content(plain_content)
+    email.add_alternative(html_body, subtype='html')
 
-        self.yesbut.pressed.connect(lambda: self.confirm_selection(True))
-        self.nobut.pressed.connect(lambda: self.confirm_selection(False))
+    if fp_to_invoice:
+        with open(fp_to_invoice, 'rb') as content_file:
+            email.add_attachment(content_file.read(), maintype='application', subtype='pdf',
+                                 filename=os.path.basename(fp_to_invoice))
+    return email
 
-        self.setLayout(layout)
-
-    def confirm_selection(self,event):
-
-        self.result = event
-        self.accept()
 
 # Every mail connection is made on the GUI thread, so an unresponsive server
 # with the default (infinite) socket timeout freezes the whole application
@@ -384,41 +405,10 @@ MAIL_TIMEOUT = 30
 
 
 def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_email,receiver_forename,invquart,invyear, template,fp_to_invoice, masterdata,port = 587):
-    email = EmailMessage()
-
-    email['Subject'] = f"Rechnung {sender_name} {invyear} Quartal {invquart}"
-    email['From'] = sender_email
-    email['To'] = receiver_email
-    print(f"Sending Mail from {sender_email} with to {receiver_email} with subject {email['Subject']} with attachment {fp_to_invoice}...")
-
-
-    output_from_parsed_template = template.render(name=receiver_forename,
-                                                  quart = invquart,
-                                                  year = invyear,
-                                                  community_name = masterdata.metadata['Bezeichnung'],
-                                                  community_companynumber = masterdata.metadata['Geschäftsnummer'],
-                                                  community_citycode = masterdata.metadata['PLZ'],
-                                                  community_city = masterdata.metadata['Wohnort'],
-                                                  community_street = masterdata.metadata['Straße'],
-                                                  community_streetnr = masterdata.metadata['StraßenNr.'],
-                                                  community_mail = masterdata.metadata['E-Mail'],
-                                                  community_website = masterdata.metadata['Web Seite'],
-                                                  community_IBAN = masterdata.metadata['IBAN'])
-
-
-    plain_content = f"Hallo {receiver_forename}. \nAnbei findest du deine Rechnung für das {invquart}, {invyear} \n Mit lieben Grüßen, \n{sender_name} \n\n|"
-    email.set_content(plain_content)  # Optional plain text
-
-    # Add HTML content
-    email.add_alternative(output_from_parsed_template, subtype='html')
-
-
-
-
-# .attach(MIMEText(output_from_parsed_template, "html"))
-    with open(fp_to_invoice, 'rb') as content_file:
-        content = content_file.read()
-        email.add_attachment(content, maintype='application', subtype='pdf', filename=os.path.basename(fp_to_invoice))
+    email = build_invoice_email(sender_email, sender_name, receiver_email, receiver_forename,
+                                invquart, invyear, template, fp_to_invoice, masterdata)
+    print(f"Sending mail to {receiver_email} with subject {email['Subject']} "
+          f"and attachment {os.path.basename(fp_to_invoice) if fp_to_invoice else '(none)'}...")
 
     context = ssl.create_default_context()
 
@@ -480,3 +470,174 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
 
         print("Stored in:", folder)
     print("... Done")
+
+
+class SendPreviewDialog(QDialog):
+    """Approve a mail run by looking at the actual mails.
+
+    Replaces a dialog that showed a list of addresses and a Ja/Nein button.
+    For an irreversible action that reaches members, seeing the rendered mail,
+    its subject and the attachment it will carry is the point.
+    """
+
+    # The invoice mail template is designed at 595px plus padding.
+    MAIL_WIDTH = 660
+
+    def __init__(self, jobs, missing, build_preview, parent=None):
+        """
+        jobs:    [(display_name, address, attachment_path), ...] - will be sent
+        missing: [(display_name, address, expected_filename), ...] - no PDF found
+        build_preview: address -> (subject, html_body, attachment_name)
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Rechnungen verschicken")
+        self.resize(1160, 680)
+        self.jobs = jobs
+        self.missing = missing
+        self.build_preview = build_preview
+        self.result = False
+
+        layout = QVBoxLayout(self)
+
+        def plural(n):
+            return "1 Mail" if n == 1 else f"{n} Mails"
+
+        summary = QLabel()
+        if missing:
+            summary.setText(f"{plural(len(jobs))} werden verschickt · "
+                            f"{len(missing)} übersprungen (keine PDF-Rechnung gefunden)")
+        else:
+            summary.setText(f"{plural(len(jobs))} werden verschickt")
+        summary.setStyleSheet("font-weight: 600; padding: 4px;")
+        layout.addWidget(summary)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        self.table = QTableWidget(len(jobs) + len(missing), 3)
+        self.table.setHorizontalHeaderLabels(["Empfänger:in", "Mailadresse", "Rechnung"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        for row, (name, address, path) in enumerate(jobs):
+            self._set_row(row, name, address, "✓ Rechnung gefunden",
+                          sendable=True, tooltip=os.path.basename(path))
+        for offset, (name, address, expected) in enumerate(missing):
+            self._set_row(len(jobs) + offset, name, address, "✗ keine Rechnung",
+                          sendable=False, tooltip=f"{expected} nicht gefunden")
+        self.table.resizeColumnsToContents()
+        # Without this the attachment column is clipped by the splitter.
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setMinimumWidth(420)
+        self.table.itemSelectionChanged.connect(self.show_selected)
+        splitter.addWidget(self.table)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        self.subject_label = QLabel()
+        self.subject_label.setWordWrap(True)
+        self.subject_label.setStyleSheet("font-weight: 600;")
+        self.attachment_label = QLabel()
+        self.attachment_label.setStyleSheet("color: palette(mid);")
+        self.body_view = QTextBrowser()
+        self.body_view.setOpenExternalLinks(False)
+        right_layout.addWidget(QLabel("Vorschau"))
+        right_layout.addWidget(self.subject_label)
+        right_layout.addWidget(self.attachment_label)
+        right_layout.addWidget(self.body_view, 1)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 5)
+        splitter.setSizes([480, 700])
+        layout.addWidget(splitter, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("Abbrechen")
+        cancel.clicked.connect(self.reject)
+        self.send_button = QPushButton(f"{plural(len(jobs))} verschicken")
+        self.send_button.setDefault(True)
+        self.send_button.setEnabled(bool(jobs))
+        self.send_button.clicked.connect(self.confirm)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.send_button)
+        layout.addLayout(buttons)
+
+        if jobs:
+            self.table.selectRow(0)
+
+    def _set_row(self, row, name, address, status, sendable, tooltip=""):
+        for column, text in enumerate((str(name), str(address), status)):
+            item = QTableWidgetItem(text)
+            if not sendable:
+                item.setForeground(QBrush(QColor("#a33")))
+            if tooltip:
+                item.setToolTip(tooltip)
+            self.table.setItem(row, column, item)
+
+    def show_selected(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.jobs):
+            # A skipped recipient has no mail to preview.
+            self.subject_label.setText("")
+            self.attachment_label.setText("Für diese Person wurde keine PDF-Rechnung gefunden - "
+                                          "es wird nichts verschickt.")
+            self._show_html("")
+            return
+        address = self.jobs[row][1]
+        try:
+            subject, html, attachment = self.build_preview(address)
+        except Exception as e:
+            self.subject_label.setText("Vorschau nicht möglich")
+            self.attachment_label.setText(str(e))
+            self._show_html("")
+            return
+        self.subject_label.setText(f"Betreff: {subject}")
+        self.attachment_label.setText(f"Anhang: {attachment}")
+        self._show_html(html)
+
+    @staticmethod
+    def _message_body(html):
+        """Strip the outer centering wrapper before handing the mail to Qt.
+
+        The template centres a fixed 595px body inside a table whose first cell
+        is a 50% spacer. Qt's rich text engine gives that spacer half the pane,
+        leaves the body too little room, and renders it one character per line.
+        Mail clients are fine with it; Qt is not. The inner table is the actual
+        message, so show that.
+        """
+        if not html:
+            return ""
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            body = soup.find(id="MAILSTYLE")
+            if body is None:
+                for table in soup.find_all("table"):
+                    if "px" in (table.get("style") or ""):
+                        body = table
+                        break
+            if body is not None:
+                return str(body)
+        except Exception as e:
+            print(f"Could not isolate the mail body for preview: {e}")
+        return html
+
+    def _show_html(self, html):
+        self._html = html
+        self.body_view.setHtml(self._message_body(html))
+        # The template is laid out for a 595px-wide mail client. Qt's rich text
+        # engine otherwise squeezes it into the pane and the body comes out one
+        # character per line; pin the width and let the pane scroll instead.
+        self.body_view.document().setTextWidth(
+            max(self.MAIL_WIDTH, self.body_view.viewport().width()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self, "_html", ""):
+            self.body_view.document().setTextWidth(
+                max(self.MAIL_WIDTH, self.body_view.viewport().width()))
+
+    def confirm(self):
+        self.result = True
+        self.accept()
