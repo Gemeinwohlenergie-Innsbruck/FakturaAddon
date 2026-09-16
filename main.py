@@ -1,5 +1,6 @@
 import datetime
 import subprocess
+import traceback
 import numpy as np
 import json
 from functools import partial
@@ -13,7 +14,8 @@ import sys
 from PyQt5.QtWidgets import QLabel, QFileDialog, QMessageBox, QGridLayout, QTableWidget, QTableWidgetItem, QListWidget, QWidget, QListWidgetItem, QCheckBox, QListWidgetItem, QPushButton, QVBoxLayout, QDialog
 from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
-from selection import select_invoice_positions
+from selection import select_invoice_positions, members_with_invoices
+from config import ENV_PATH, load_env
 from PyQt5.QtWidgets import QHBoxLayout
 import datetime as dt
 import imaplib
@@ -101,36 +103,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.move(20, 20)
         self.second_window = None
         self.exportwindow = None
-
-        ENV_PATH = Path(__file__).parent / ".env"
-
-        _ENV_KEYS = {
-            "user": "EEG_USER",
-            "password": "EEG_PASSWORD",
-            "tenant": "EEG_TENANT",
-            "community_id": "EEG_COMMUNITY_ID",
-            "my_mail": "MAIL_ADDRESS",
-            "imap_server": "MAIL_IMAP_SERVER",
-            "my_mail_pw": "MAIL_PASSWORD",
-            "home_directory": "HOME_DIRECTORY",
-            "EEG_name": "EEG_NAME",
-            "template_export_invoice" : "TEMPLATE_EXPORT_INVOICE",
-            "template_email" : "TEMPLATE_EMAIL"
-        }
-
-        def load_env() -> dict:
-            values = {}
-            if not ENV_PATH.exists():
-                return values
-            for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, val = line.partition("=")
-                for field, env_key in _ENV_KEYS.items():
-                    if key.strip() == env_key:
-                        values[field] = val.strip()
-            return values
 
         self.config = load_env()
         # Never print the config itself - it holds MAIL_PASSWORD and EEG_PASSWORD.
@@ -257,6 +229,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self.masterdata = masterdata
         self.energydata = energydata
         self.new_member = newmember
+
+    def report_invoice_problems(self, problems):
+        """Show what a batch skipped, instead of losing it to a console nobody sees."""
+        if not problems:
+            QMessageBox.information(self, "Fertig", "Alle Rechnungen wurden erstellt.")
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Mit Anmerkungen abgeschlossen")
+        box.setText(f"{len(problems)} Punkt(e) brauchen deine Aufmerksamkeit.")
+        box.setDetailedText("\n\n".join(problems))
+        box.exec_()
+
+    def report_send_result(self, sent, failed, missing):
+        """Summarise a mail run: what went out, what did not, and why."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Mailversand abgeschlossen")
+        box.setIcon(QMessageBox.Warning if (failed or missing) else QMessageBox.Information)
+        lines = [f"Verschickt: {len(sent)}"]
+        if missing:
+            lines.append(f"Ohne PDF übersprungen: {len(missing)}")
+        if failed:
+            lines.append(f"Fehlgeschlagen: {len(failed)}")
+        box.setText("\n".join(lines))
+        details = []
+        if sent:
+            details.append("Verschickt an:\n" + "\n".join(sent))
+        if missing:
+            details.append("Keine Rechnung gefunden:\n" + "\n".join(missing))
+        if failed:
+            details.append("Fehler:\n" + "\n".join(failed))
+        if details:
+            box.setDetailedText("\n\n".join(details))
+        box.exec_()
 
 
     def init_loading_functionality(self,table_widget_in_which_loading_is_done):
@@ -524,7 +530,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                 filepath = f"{filepath}.csv"
                             print(f"Export {what} to: {filepath}")
                             try:
-                                df.to_csv(filepath, index=False, sep=";")
+                                # utf-8-sig: plain UTF-8 has no BOM, so German
+                                # banking imports read Müller/Straße as mojibake
+                                # in the account name and payment reference.
+                                df.to_csv(filepath, index=False, sep=";", encoding="utf-8-sig")
                                 return True
                             except Exception as e:
                                 print(f"Saving {what} failed: {e}")
@@ -731,11 +740,11 @@ class MainWindow(QtWidgets.QMainWindow):
             print(f"Check was {check}, datamissing {datamissing}")
 
             if check:
-                qov_values = energydata.metadata.copy()
-                qov_cols = energydata.metadata.columns.get_level_values(0) == "QoV"
+                qov_values = self.energydata.metadata.copy()
+                qov_cols = self.energydata.metadata.columns.get_level_values(0) == "QoV"
                 qov_values.columns = range(qov_values.shape[1])
                 qov_values = qov_values.loc[:,qov_cols]
-                qov_L3_values = (energydata.metadata.loc[:,qov_cols] == "L3").values
+                qov_L3_values = (self.energydata.metadata.loc[:,qov_cols] == "L3").values
                 times_qov_L3 = qov_L3_values.any(axis = 1)
                 change = np.diff(times_qov_L3.astype(int))
                 starts = np.where(change == 1)[0] + 1
@@ -749,15 +758,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 report_list = []
                 for start, end in qovL3_startendgroups:
                     columns_this_L3, = np.where(qov_L3_values[start])
-                    names = np.unique(energydata.metadata.columns[qov_values.columns[columns_this_L3]-1].get_level_values('Name'))
+                    names = np.unique(self.energydata.metadata.columns[qov_values.columns[columns_this_L3]-1].get_level_values('Name'))
                     shownames =', '.join(names)
                     if names.shape[0] > 3:
                         shownames = "All"
-                    Metering_points = np.unique(energydata.metadata.columns[qov_values.columns[columns_this_L3]-1].get_level_values('MeteringpointID'))
-                    days = (energydata.metadata.index[start].date(),energydata.metadata.index[end].date())
-                    timerange = f"{energydata.metadata.index[start]} - {energydata.metadata.index[end]}"
+                    Metering_points = np.unique(self.energydata.metadata.columns[qov_values.columns[columns_this_L3]-1].get_level_values('MeteringpointID'))
+                    days = (self.energydata.metadata.index[start].date(),self.energydata.metadata.index[end].date())
+                    timerange = f"{self.energydata.metadata.index[start]} - {self.energydata.metadata.index[end]}"
                     print(days,timerange,names,Metering_points)
-                    line = [energydata.metadata.index[start].date(),energydata.metadata.index[end].date(),shownames,timerange,', '.join(names),', '.join(Metering_points)]
+                    line = [self.energydata.metadata.index[start].date(),self.energydata.metadata.index[end].date(),shownames,timerange,', '.join(names),', '.join(Metering_points)]
                     report_list.append(line)
                 report_df = pd.DataFrame(report_list,columns = ["Start Datum", "End Datum", "Namen Übersicht", "Zeitraum Details","Namen Details", "ZP Details"])
                 if report_df.shape[0] == 0:
@@ -766,19 +775,36 @@ class MainWindow(QtWidgets.QMainWindow):
                     message.setText(text)
                     message.exec_()
                 else:
-                    self.safepath_this_energyreport = load_filepath(self,
-                                                                    "Wo soll den Überprüfungsreport hinspeichern?.",
-                                                                    fileex=False,
-                                                                    defaultfilename=f"Energydata_QoV_Report_{energydata.metadata.index[0].strftime("%Y_%m_%d")}-{energydata.metadata.index[-1].strftime("%Y_%m_%d")}.xlsx",
-                                                                    homedir=self.home_directory)
-                    if not self.safepath_this_energyreport.lower().endswith(".xslx"):
-                        self.safepath_this_energyreport += ".xlsx"
-                    print(f"Save qov Report to: {self.safepath_this_energyreport}")
-                    report_df.to_excel(self.safepath_this_energyreport)
+                    first_day = self.energydata.metadata.index[0].strftime("%Y_%m_%d")
+                    last_day = self.energydata.metadata.index[-1].strftime("%Y_%m_%d")
+                    savepath = load_filepath(self,
+                                             "Wo soll ich den Überprüfungsreport hinspeichern?",
+                                             fileex=False,
+                                             defaultfilename=f"Energydata_QoV_Report_{first_day}-{last_day}.xlsx",
+                                             homedir=self.home_directory)
+                    if savepath is None:
+                        # Cancelling used to call .lower() on None right here.
+                        print("No path selected for the QoV report")
+                        return
+                    # Was ".xslx" - transposed letters, so a correctly named
+                    # file became Report.xlsx.xlsx.
+                    if not savepath.lower().endswith(".xlsx"):
+                        savepath += ".xlsx"
+                    self.safepath_this_energyreport = savepath
+                    print(f"Save qov Report to: {savepath}")
                     try:
-                        os.startfile(self.safepath_this_energyreport)
-                    except:
-                        subprocess.Popen(["libreoffice", self.safepath_this_energyreport])
+                        report_df.to_excel(savepath)
+                    except Exception as e:
+                        QMessageBox.critical(self, "Speichern fehlgeschlagen",
+                                             f"Der Report konnte nicht gespeichert werden:\n{savepath}\n\n{e}")
+                        return
+                    try:
+                        os.startfile(savepath)
+                    except Exception:
+                        try:
+                            subprocess.Popen(["libreoffice", savepath])
+                        except Exception as e:
+                            print(f"Could not open the report automatically: {e}")
 
 
 
@@ -808,20 +834,29 @@ class MainWindow(QtWidgets.QMainWindow):
                     # for loading screeen i need multithreading
                     class Worker(QObject):
                         progress = pyqtSignal(str)
-                        finished = pyqtSignal()
+                        finished = pyqtSignal(list)   # problems encountered
 
                         def __init__(self, task_func):
                             super().__init__()
                             self.task_func = task_func
 
                         def run(self):
-                            self.task_func(self.progress.emit,self.finished.emit)
+                            problems = []
+                            try:
+                                problems = self.task_func(self.progress.emit) or []
+                            except Exception as e:
+                                traceback.print_exc()
+                                problems = [f"Abbruch durch einen Fehler: {e}"]
+                            finally:
+                                # Always emit. Any path that skipped this left the
+                                # dialog open and the thread running forever.
+                                self.finished.emit(problems)
 
                     class StatusDialog(QDialog):
                         def __init__(self):
                             super().__init__()
                             self.setWindowTitle("Arbeitet...")
-                            self.label = QLabel("Preparing...")
+                            self.label = QLabel("Rechnungen werden vorbereitet...")
                             layout = QVBoxLayout()
                             layout.addWidget(self.label)
                             self.setLayout(layout)
@@ -829,24 +864,35 @@ class MainWindow(QtWidgets.QMainWindow):
                         def update_text(self, message):
                             self.label.setText(message)
 
-                    def task_for_worker(callback,finished):
-                        produce_invoices_and_save(self.energydata.data, invoices.data["detailed"], self.masterdata, self.invoices.template,
-                                                  self.safepath_this_invoices,callback,finished)
+                        def keyPressEvent(self, event):
+                            # Esc would close the dialog and drop the last
+                            # reference to a still-running thread.
+                            if event.key() != Qt.Key_Escape:
+                                super().keyPressEvent(event)
+
+                    def task_for_worker(callback):
+                        return produce_invoices_and_save(
+                            self.energydata.data, self.invoices.data["detailed"], self.masterdata,
+                            self.invoices.template, self.safepath_this_invoices, callback)
 
                     dialog = StatusDialog()
-                    dialog.show()
 
                     thread = QThread()
                     worker = Worker(task_for_worker)
                     worker.moveToThread(thread)
 
+                    collected_problems = []
                     worker.progress.connect(dialog.update_text)
+                    worker.finished.connect(collected_problems.extend)
                     worker.finished.connect(thread.quit)
-                    worker.finished.connect(dialog.accept)
+                    worker.finished.connect(lambda _: dialog.accept())
                     thread.started.connect(worker.run)
 
                     thread.start()
                     dialog.exec_()
+                    thread.wait()
+
+                    self.report_invoice_problems(collected_problems)
                 else:
                     print("no fp selected")
 
@@ -865,9 +911,17 @@ class MainWindow(QtWidgets.QMainWindow):
             # print(self.invoices.data)
             check,datamissing = check_whether_data_exists(invoices = self.invoices, masterdata=self.masterdata,emails= self.emails,invoicedatarequired=True, masterdatarequired= True,emailstemprequired=True)
             if check:
-                personswithinvoicesmasterdata = self.masterdata.data.loc[(self.masterdata.data["Name 1"]).isin(self.invoices.data["detailed"]["Empfänger Vorame"]) & (self.masterdata.data["Name 2"]).isin(self.invoices.data["detailed"]["Empfänger Nachname"]),:]
-                # print(personswithinvoicesmasterdata)
-                personswithinvoicesmasterdata = personswithinvoicesmasterdata[["Name 1","Name 2","E-Mail"]].drop_duplicates()
+                # Match on the (Vorname, Nachname) pair. Testing the two columns
+                # independently also matched people who share a first name with
+                # one recipient and a surname with another, i.e. members with no
+                # invoice at all were queued to receive one.
+                personswithinvoicesmasterdata = members_with_invoices(
+                    self.masterdata.data, self.invoices.data["detailed"])
+                if personswithinvoicesmasterdata.empty:
+                    QMessageBox.information(self, "Keine Empfänger:innen",
+                                            "Zu den geladenen Rechnungen wurde niemand in den "
+                                            "Stammdaten gefunden.")
+                    return
 
                 def try_logging_in_f(user, pw, host):
                     print(f"try logging in to IMAP server as {user}")
@@ -884,46 +938,72 @@ class MainWindow(QtWidgets.QMainWindow):
                 logged_in = try_logging_in_f(self.config.get("my_mail", ""), self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""))
                 if logged_in:
                     mailadressselection = MailAdressSelection(personswithinvoicesmasterdata["E-Mail"], title="Wähle die Personen aus, denen du eine Mail schreiben willst")
-                    if mailadressselection.exec_():  # This blocks until dialog is closed
-                        selected_persons  = None
-                        selected_persons = mailadressselection.result
-                        print("Returned from dialog:", selected_persons)
-                    else:
+                    # Early returns: these values used to be assigned only inside
+                    # the accepted branch, so cancelling raised UnboundLocalError.
+                    if not mailadressselection.exec_():
                         print("Dialog canceled")
-                    if selected_persons is not None:
-                        personswithinvoicesselected = personswithinvoicesmasterdata.loc[selected_persons,:]
-                        sendapproval = Sendapproval(personswithinvoicesselected["E-Mail"], title="Wähle die Personen aus, denen du eine Mail schreiben willst")
-                        if sendapproval.exec_():  # This blocks until dialog is closed
-                            send_y_n = sendapproval.result
-                            print("Returned from dialog:", send_y_n)
+                        return
+                    selected_persons = mailadressselection.result
+                    personswithinvoicesselected = personswithinvoicesmasterdata.loc[selected_persons,:]
+                    if personswithinvoicesselected.empty:
+                        QMessageBox.information(self, "Keine Auswahl", "Es wurde niemand ausgewählt.")
+                        return
+
+                    sendapproval = Sendapproval(personswithinvoicesselected["E-Mail"], title="Wähle die Personen aus, denen du eine Mail schreiben willst")
+                    if not sendapproval.exec_():
+                        print("Dialog canceled")
+                        return
+                    if not sendapproval.result:
+                        print("Dont send")
+                        return
+
+                    if not self.safepath_this_invoices:
+                        self.safepath_this_invoices = load_filepath(self, "In welchem Ordner sind die ganzen Rechnungen gespeichert?", pathisdir=True,homedir= self.home_directory)
+                    if not self.safepath_this_invoices:
+                        print("No invoice folder selected - aborting")
+                        return
+
+                    invoicequart = self.invoices.data["detailed"]["Abrechnung"].iloc[0]
+                    self.thisinvoices_year = invoicequart.split("-")[-2]
+                    self.thisinvoice_quart = invoicequart.split("-")[-1]
+
+                    # Resolve every attachment before sending anything: a missing
+                    # PDF used to surface as FileNotFoundError partway through,
+                    # after some members had already been mailed.
+                    jobs, missing = [], []
+                    for _, person_data in personswithinvoicesselected.iterrows():
+                        receivername = f"{person_data['Name 1']}_{person_data['Name 2']}"
+                        nameinvoicefile = f"Rechnung_{self.thisinvoices_year}_q{self.thisinvoice_quart}_{receivername}.pdf"
+                        fpinvoicefile = os.path.join(self.safepath_this_invoices, nameinvoicefile)
+                        if os.path.exists(fpinvoicefile):
+                            jobs.append((person_data, fpinvoicefile))
                         else:
-                            print("Dialog canceled")
-                        if send_y_n:
-                            print(f"Send Mails to {personswithinvoicesselected["E-Mail"]}")
-                            if not self.safepath_this_invoices:
-                                self.safepath_this_invoices = load_filepath(self, "In welchem Ordner sind die ganzen Rechnungen gespeichert?", pathisdir=True,homedir= self.home_directory)
+                            missing.append(f"{person_data['E-Mail']}: {nameinvoicefile} nicht gefunden")
 
+                    if missing:
+                        proceed = QMessageBox.question(
+                            self, "Rechnungen fehlen",
+                            f"Für {len(missing)} von {len(personswithinvoicesselected)} Personen wurde "
+                            f"keine PDF-Rechnung gefunden.\n\nSoll ich die übrigen {len(jobs)} trotzdem "
+                            f"verschicken?",
+                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                        if proceed != QMessageBox.Yes:
+                            return
 
+                    sent, failed = [], []
+                    for person_data, fpinvoicefile in jobs:
+                        print(f"Send Mail to: {person_data['E-Mail']}")
+                        try:
+                            send_mail_to_one_person(self.config.get("my_mail", ""),self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""),self.config.get("EEG_name", ""),person_data["E-Mail"],person_data["Name 1"],
+                                                    self.thisinvoice_quart, self.thisinvoices_year, self.emails.template, fpinvoicefile, self.masterdata)
+                            sent.append(person_data["E-Mail"])
+                        except Exception as e:
+                            # One bad address must not abort a run that has
+                            # already delivered to everybody before it.
+                            traceback.print_exc()
+                            failed.append(f"{person_data['E-Mail']}: {e}")
 
-                            for ind, person_data in personswithinvoicesselected.iterrows():
-                                print(f"Send Mail to: {person_data['E-Mail']}")
-
-                                receivername = f"{person_data["Name 1"]}_{person_data["Name 2"]}"
-                                invoicequart = invoices.data["detailed"]["Abrechnung"].iloc[0]
-                                email_this = person_data["E-Mail"]
-                                invoices_year, invoices_quart = invoicequart.split("-")[-2], invoicequart.split("-")[-1]
-                                self.thisinvoices_year = invoices_year
-                                self.thisinvoice_quart = invoices_quart
-                                nameinvoicefile = f"Rechnung_{self.thisinvoices_year}_q{self.thisinvoice_quart}_{receivername}.pdf"
-
-                                fpinvoicefile = os.path.join(self.safepath_this_invoices , nameinvoicefile)
-                                send_mail_to_one_person(self.config.get("my_mail", ""),self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""),self.config.get("EEG_name", ""),email_this,person_data["Name 1"],
-                                                        self.thisinvoice_quart, self.thisinvoices_year, self.emails.template, fpinvoicefile, masterdata)
-
-
-                        else: print("Dont send")
-                    else:
-                        print("Abort since nobody was selected")#
+                    self.report_send_result(sent, failed, missing)
 
                 else:
                     # Never echo the password here - this dialog is exactly what

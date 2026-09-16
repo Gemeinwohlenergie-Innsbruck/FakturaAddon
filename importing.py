@@ -165,7 +165,7 @@ def load_energy_data(filepath = "", nc = False, qov = False):
             def __init__(self, message="Laden"):
                 super().__init__()
                 self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)  # keep on top
-                self.setWindowTitle("Loading")
+                self.setWindowTitle("Laden")
                 self.setModal(True)  # modal dialog
                 self.resize(250, 80)
 
@@ -174,6 +174,13 @@ def load_energy_data(filepath = "", nc = False, qov = False):
                 self.label.setAlignment(Qt.AlignCenter)
                 layout.addWidget(self.label)
                 self.setLayout(layout)
+
+            def keyPressEvent(self, event):
+                # Esc would close the dialog, return from this function, and
+                # drop the last reference to a still-running QThread - Qt then
+                # aborts with "QThread: Destroyed while thread is still running".
+                if event.key() != Qt.Key_Escape:
+                    super().keyPressEvent(event)
 
 
         class Worker(QThread):
@@ -201,35 +208,39 @@ def load_energy_data(filepath = "", nc = False, qov = False):
                     self.finished.emit([False,f"There was an error loading: {e}"])
 
         dlg = LoadingDialog("Laden, bitte warten...")
-        dlg.show()
         df_container = {}
+        load_error = {}
+
         def on_finished(emit):
             if emit[0]:
                 df_container["df"] = emit[1]
-                print(df_container)
-
             else:
+                load_error["message"] = emit[1]
                 print(emit[1])
-                errorbox = QMessageBox()
-                errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
-                errorbox.exec_()
-                return
-        worker = Worker(filepath,qov)
-        worker.finished.connect(lambda df: dlg.close())
+
+        worker = Worker(filepath, qov)
         worker.finished.connect(on_finished)
+        worker.finished.connect(lambda _: dlg.accept())
 
         worker.start()
-
-
         dlg.exec()
+        # Block until the thread has actually finished before `worker` goes out
+        # of scope, otherwise Qt tears down a running QThread.
+        worker.wait()
 
-
+        if load_error:
+            # Raised here rather than inside the signal handler, so the modal
+            # error box is not opened from within another modal dialog's loop.
+            errorbox = QMessageBox()
+            errorbox.setWindowTitle("Datei nicht lesbar")
+            errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"
+                             f"\n\n{load_error['message']}")
+            errorbox.exec_()
     else:
         print("Nextcloud loading")
-    if df_container:
-        return df_container["df"]
-    else:
         return None
+
+    return df_container.get("df")
 
 def load_faktura_member_export_template(filepath = "",nc =False, nc_instance = ''):
     print(f"Load {filepath}")
@@ -369,63 +380,14 @@ import requests
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QFormLayout, QLineEdit,
-    QPushButton, QDialogButtonBox, QLabel, QVBoxLayout
+    QPushButton, QDialogButtonBox, QLabel, QVBoxLayout, QHBoxLayout, QFileDialog
 )
 
+# Single source of truth. Three copies of these used to live in this file,
+# and only the last one was reachable.
+from config import ENV_PATH, ENV_KEYS, load_env, save_env
+
 BASE_URL = "https://eegfaktura.at/energystore/query"
-ENV_PATH = Path(__file__).parent / ".env"
-
-# Mapping: internal field name → .env key
-_ENV_KEYS = {
-    "user":         "EEG_USER",
-    "password":     "EEG_PASSWORD",
-    "tenant":       "EEG_TENANT",
-    "community_id": "EEG_COMMUNITY_ID",
-}
-
-
-def load_env() -> dict:
-    """Read KEY=VALUE pairs from .env and return a dict with our credential fields."""
-    values = {}
-    if not ENV_PATH.exists():
-        return values
-    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        for field, env_key in _ENV_KEYS.items():
-            if key.strip() == env_key:
-                values[field] = val.strip()
-    return values
-
-
-def save_env(creds: dict) -> None:
-    """Write credentials back to .env, preserving any unrelated lines."""
-    to_write = {_ENV_KEYS[k]: v for k, v in creds.items() if k in _ENV_KEYS}
-
-    existing_lines = []
-    if ENV_PATH.exists():
-        existing_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
-
-    updated = set()
-    new_lines = []
-    for line in existing_lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.partition("=")[0].strip()
-            if key in to_write:
-                new_lines.append(f"{key}={to_write[key]}")
-                updated.add(key)
-                continue
-        new_lines.append(line)
-
-    # Append any keys not yet present in the file
-    for env_key, val in to_write.items():
-        if env_key not in updated:
-            new_lines.append(f"{env_key}={val}")
-
-    ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
 def fetch_community_metadata(community_id: str, tenant: str, user: str, password: str) -> dict:
@@ -542,129 +504,6 @@ class LoginDialog(QDialog):
     def get_metadata(self) -> dict:
         """Returns the metadata response from the server (only valid after accept())."""
         return getattr(self, "_metadata", {})
-
-#
-import sys
-import requests
-from pathlib import Path
-from PyQt5.QtWidgets import (
-    QApplication, QDialog, QFormLayout, QLineEdit,
-    QDialogButtonBox, QLabel, QVBoxLayout, QFileDialog, QPushButton, QHBoxLayout
-)
-
-ENV_PATH = Path(__file__).parent / ".env"
-
-_ENV_KEYS = {
-    "my_mail":        "MAIL_ADDRESS",
-    "imap_server":    "MAIL_IMAP_SERVER",
-    "my_mail_pw":     "MAIL_PASSWORD",
-    "home_directory": "HOME_DIRECTORY",
-    "EEG_name":       "EEG_NAME",
-}
-
-
-def load_env() -> dict:
-    values = {}
-    if not ENV_PATH.exists():
-        return values
-    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        for field, env_key in _ENV_KEYS.items():
-            if key.strip() == env_key:
-                values[field] = val.strip()
-    return values
-
-
-def save_env(settings: dict) -> None:
-    to_write = {_ENV_KEYS[k]: v for k, v in settings.items() if k in _ENV_KEYS}
-
-    existing_lines = []
-    if ENV_PATH.exists():
-        existing_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
-
-    updated = set()
-    new_lines = []
-    for line in existing_lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.partition("=")[0].strip()
-            if key in to_write:
-                new_lines.append(f"{key}={to_write[key]}")
-                updated.add(key)
-                continue
-        new_lines.append(line)
-
-    for env_key, val in to_write.items():
-        if env_key not in updated:
-            new_lines.append(f"{env_key}={val}")
-
-    ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-
-
-import sys
-import requests
-from pathlib import Path
-from PyQt5.QtWidgets import (
-    QApplication, QDialog, QFormLayout, QLineEdit,
-    QDialogButtonBox, QLabel, QVBoxLayout, QFileDialog, QPushButton, QHBoxLayout
-)
-
-ENV_PATH = Path(__file__).parent / ".env"
-
-_ENV_KEYS = {
-    "my_mail":                  "MAIL_ADDRESS",
-    "imap_server":              "MAIL_IMAP_SERVER",
-    "my_mail_pw":               "MAIL_PASSWORD",
-    "home_directory":           "HOME_DIRECTORY",
-    "EEG_name":                 "EEG_NAME",
-    "template_export_invoice":  "TEMPLATE_EXPORT_INVOICE",
-    "template_email":           "TEMPLATE_EMAIL",
-}
-
-
-def load_env() -> dict:
-    values = {}
-    if not ENV_PATH.exists():
-        return values
-    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        for field, env_key in _ENV_KEYS.items():
-            if key.strip() == env_key:
-                values[field] = val.strip()
-    return values
-
-
-def save_env(settings: dict) -> None:
-    to_write = {_ENV_KEYS[k]: v for k, v in settings.items() if k in _ENV_KEYS}
-
-    existing_lines = []
-    if ENV_PATH.exists():
-        existing_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
-
-    updated = set()
-    new_lines = []
-    for line in existing_lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.partition("=")[0].strip()
-            if key in to_write:
-                new_lines.append(f"{key}={to_write[key]}")
-                updated.add(key)
-                continue
-        new_lines.append(line)
-
-    for env_key, val in to_write.items():
-        if env_key not in updated:
-            new_lines.append(f"{env_key}={val}")
-
-    ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):

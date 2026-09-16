@@ -208,7 +208,30 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
 # invoicedata = invoices.data['detailed'][invoices.data['detailed']['Empfänger Name'] == fullname]
 #invoicetemplate = invoices.template_for_export
 
-def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,savedirfp,callback,finished):
+def resolve_name_in_energydata(energydata, name):
+    """Return the spelling of `name` used in the energy data columns, or None.
+
+    EEG Faktura and the energy export disagree about trailing whitespace, so
+    try the name as-is, with a trailing space, then with the last character
+    dropped - the same three attempts the original code made inline.
+    """
+    for candidate in (name, name + " ", name[:-1]):
+        try:
+            energydata.loc[:, pd.IndexSlice[:, candidate, :, :]]
+            return candidate
+        except Exception:
+            continue
+    return None
+
+
+def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,savedirfp,callback):
+    """Render and save one invoice per member.
+
+    Returns a list of human-readable problems. The caller owns the worker
+    lifecycle - this function no longer signals completion itself, because the
+    old early `return None` skipped that signal and left the app hung.
+    """
+    problems = []
     # fullname = f"{personaldata['Name 1']} {personaldata['Name 2']}"
     debit,transfer, doublesprocess = check_doubles(invoicedata)
     # debit, transfer = debit[cols_for_tbl], transfer[cols_for_tbl]
@@ -302,25 +325,16 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         axs[0].set_xticklabels([])
         # prepare data for plot
         # check whether the energy direction is always the same
-        name_new = name
-        try:
-            energydata.loc[:, pd.IndexSlice[:, name, :, :]]
-        except:
-            print(f"This Name {name}  is not in the Energydatacolumns {energydata.columns.get_level_values(level="Name")} try adding a whitespace")
-            name_new = name+ " "
-            try:
-                energydata.loc[:, pd.IndexSlice[:, name_new, :, :]]
-                print("This worked")
-            except:
-                print(
-                    f"This Name {name_new}  is not in the Energydatacolumns {energydata.columns.get_level_values(level="Name")} try deleting the last char")
-                name_new = name[0:-1]
-                try:
-                    energydata.loc[:, pd.IndexSlice[:, name_new, :, :]]
-                except:
-                    print(f"Nothing worked, abort, change the name of the columns in the files sot that they are the same: \n"
-                          f"in Invoice: {name}, so that it maches in the Energydata any f the columns: {energydata.columns.get_level_values(level="Name")}")
-                    return None
+        name_new = resolve_name_in_energydata(energydata, name)
+        if name_new is None:
+            # Was `return None`, which abandoned the whole batch *and* skipped
+            # the completion signal, hanging the app. Skip this member instead.
+            msg = (f"{name}: kein passender Name in den Energiedaten gefunden - "
+                   f"Rechnung übersprungen. Namen in Faktura und Energiedaten angleichen.")
+            print(msg)
+            problems.append(msg)
+            plt.close(fig)
+            continue
 
         name = name_new
 
@@ -406,114 +420,102 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
             axs[1].legend(fontsize='small', loc=1, bbox_to_anchor=(0.8, 1.22))
         sidetext = ""
 
-        for energydirection in energydirections.unique():
+        def read_series(energydirection, meteringpointid):
+            """Read one energy series for this member.
 
-            if len(energydirections.unique()) > 1:
-                # this is a prsoumer
-                print("This is a prosumer")
+            `meteringpointid=None` aggregates across all of their metering
+            points. Returns a dict, or None when the data is not there.
 
-            if len(meteringpointids.unique()) > 4:
-                # if there are more than 4 metering point make only one  plot
-                print("To many energypoints for this person make an average")
-                print(energydirection, meteringpointid, hatch)
-
+            Returning None matters: the previous version caught the failure and
+            fell through to the plotting call with `energy_through_evu`,
+            `plottext1` etc. still bound from the *previous* metering point or
+            the *previous member*, so a failed lookup silently drew somebody
+            else's energy data onto this member's invoice.
+            """
+            mp = slice(None) if meteringpointid is None else meteringpointid
+            aggregated = meteringpointid is None
+            zp = "" if aggregated else f" ZP {meteringpointid[-6:]}"
+            try:
                 if energydirection == "GENERATION":
-                    try:
-                        total_energy_all_meteringpoints = energydata.loc[:, pd.IndexSlice[slice(None), name, energydirection,
+                    total = energydata.loc[:, pd.IndexSlice[mp, name, energydirection,
                         "Gesamte gemeinschaftliche Erzeugung [KWH]"]].sort_index()
-                        total_energy = total_energy_all_meteringpoints.sum(axis=1)
-                        energy_through_evu_all_meteringpoints = energydata.loc[
-                            :, pd.IndexSlice[slice(None), name, energydirection,
-                            "Gesamt/Überschusserzeugung, Gemeinschaftsüberschuss [KWH]"]].sort_index()
-                        energy_through_evu = energy_through_evu_all_meteringpoints.sum(axis = 1)
-                        energy_through_eg = pd.DataFrame(
-                            (np.nan_to_num(total_energy.values, 0) - np.nan_to_num(energy_through_evu.values, 0)),
-                            index=total_energy.index)
-                        plottext1 = f"Energielieferung an außerhalb der Energiegemeinschaft"
-                        plottext2 = f"Energielieferung über unsere Energiegemeinschaft"
-                        totalsumeg = np.nansum(energy_through_eg.values)
-                        shareeg = totalsumeg / np.nansum(total_energy.values) * 100
-                        sidetext += f"Insgesamt wurden {totalsumeg:.1f}kWh an die Energiegemeinschaft verkauft. \nDies ist {shareeg:.1f}% deiner gesamten erzeugten Energie in diesem Quartal.\n"
-                    except: pass
-
+                    through_evu = energydata.loc[:, pd.IndexSlice[mp, name, energydirection,
+                        "Gesamt/Überschusserzeugung, Gemeinschaftsüberschuss [KWH]"]].sort_index()
+                    if aggregated:
+                        total, through_evu = total.sum(axis=1), through_evu.sum(axis=1)
+                    through_eg = pd.DataFrame(
+                        np.nan_to_num(total.values, nan=0.0) - np.nan_to_num(through_evu.values, nan=0.0),
+                        index=total.index)
+                    text1 = f"Energielieferung an außerhalb der Energiegemeinschaft{' von' + zp if zp else ''}"
+                    text2 = f"Energielieferung über unsere Energiegemeinschaft{' von' + zp if zp else ''}"
                 else:
-                    try:
-                        total_energy_all_meteringpoints = energydata.loc[:, pd.IndexSlice[slice(None), name, energydirection,
+                    total = energydata.loc[:, pd.IndexSlice[mp, name, energydirection,
                         "Gesamtverbrauch lt. Messung (bei Teilnahme gem. Erzeugung) [KWH]"]].sort_index()
-                        total_energy = total_energy_all_meteringpoints.sum(axis=1)
-                        energy_through_eg_all_meteringpoints = energydata.loc[
-                            :, pd.IndexSlice[slice(None), name, energydirection,
-                            "Eigendeckung gemeinschaftliche Erzeugung [KWH]"]].sort_index()
-                        energy_through_eg = energy_through_eg_all_meteringpoints.sum(axis=1)
+                    through_eg = energydata.loc[:, pd.IndexSlice[mp, name, energydirection,
+                        "Eigendeckung gemeinschaftliche Erzeugung [KWH]"]].sort_index()
+                    if aggregated:
+                        total, through_eg = total.sum(axis=1), through_eg.sum(axis=1)
+                    through_evu = pd.DataFrame(
+                        np.nan_to_num(total.values, nan=0.0) - np.nan_to_num(through_eg.values, nan=0.0),
+                        index=total.index)
+                    text1 = f"Energiebezug von Stromlieferant{' für' + zp if zp else ''}"
+                    text2 = f"Energiebezug über unsere Energiegemeinschaft{' für' + zp if zp else ''}"
+            except Exception as e:
+                print(f"No energy data for {name} / {energydirection} / {meteringpointid}: {e}")
+                return None
 
-                        energy_through_evu = pd.DataFrame(
-                            (np.nan_to_num(total_energy.values, 0) - np.nan_to_num(energy_through_eg.values, 0)),
-                            index=total_energy.index)
-                        plottext1 = f"Energiebezug von Stromlieferant"
-                        plottext2 = f"Energiebezug über unsere Energiegemeinschaf"
-                        totalsumeg = np.nansum(energy_through_eg.values)
-                        shareeg = totalsumeg / np.nansum(total_energy.values) * 100
-                        sidetext += f"Insgesamt wurden {totalsumeg:.1f}kWh über die Energiegemeinschaft bezogen. \nDies ist {shareeg:.1f}% deines Gesamtenergieverbrauchs in diesem Quartal.\n"
-                    except:pass
+            total_eg = float(np.nansum(through_eg.values))
+            grand_total = float(np.nansum(total.values))
+            # A member with no readings would otherwise divide by zero here and
+            # lose the whole chart to the bare except.
+            share = (total_eg / grand_total * 100) if grand_total else 0.0
+            return {"evu": through_evu, "eg": through_eg,
+                    "text1": text1, "text2": text2,
+                    "total_eg": total_eg, "share": share}
 
-                hatch = hatches[hatchnr]
-                edgecolor = edgecolors[hatchnr]
-                parsing_dict[
-                    "TextfürVerbrauch"] = sidetext
-                prepare_data_plotting_one_quantity(energy_through_evu, energy_through_eg,
-                                                   axs, plottext1, plottext2, hatch, edgecolor)
-                hatchnr +=1
+        def compose_sidetext(energydirection, meteringpointid, single, total_eg, share):
+            zp = "" if meteringpointid is None else f"ZP {meteringpointid[-6:]}"
+            if energydirection == "GENERATION":
+                if single or not zp:
+                    return (f"Insgesamt wurden {total_eg:.1f}kWh an die Energiegemeinschaft verkauft. \n"
+                            f"Dies ist {share:.1f}% deiner gesamten erzeugten Energie in diesem Quartal.\n")
+                return (f"Von {zp} wurden {total_eg:.1f}kWh an die Energiegemeinschaft geliefert. \n"
+                        f"Dies ist {share:.1f}% der erzeugten Energie in diesem Quartal.\n")
+            if single or not zp:
+                return (f"Insgesamt wurden {total_eg:.1f}kWh über die Energiegemeinschaft bezogen. \n"
+                        f"Dies ist {share:.1f}% deines Gesamtenergieverbrauchs in diesem Quartal.\n")
+            return (f"Von {zp} wurden {total_eg:.1f}kWh über die Energiegemeinschaft bezogen. \n"
+                    f"Dies ist {share:.1f}% des Verbrauchs in diesem Quartal.\n")
+
+        unique_meteringpoints = meteringpointids.unique()
+        single_meteringpoint = unique_meteringpoints.shape[0] == 1
+        for energydirection in energydirections.unique():
+            # More than four metering points: one aggregated plot instead of
+            # one per point, otherwise the chart is unreadable.
+            if len(unique_meteringpoints) > 4:
+                targets = [None]
             else:
-                for meteringpointid in meteringpointids.unique():
-                    hatch = hatches[hatchnr]
-                    edgecolor = edgecolors[hatchnr]
-                    print(energydirection, meteringpointid, hatch)
+                targets = list(unique_meteringpoints)
 
-                    if energydirection == "GENERATION":
-                        try:
-                            total_energy = energydata.loc[:, pd.IndexSlice[meteringpointid, name, energydirection,
-                            "Gesamte gemeinschaftliche Erzeugung [KWH]"]].sort_index()
-
-                            energy_through_evu = energydata.loc[:, pd.IndexSlice[meteringpointid, name, energydirection,
-                            "Gesamt/Überschusserzeugung, Gemeinschaftsüberschuss [KWH]"]].sort_index()
-                            energy_through_eg = pd.DataFrame(
-                                (np.nan_to_num(total_energy.values, 0) - np.nan_to_num(energy_through_evu.values, 0)),
-                                index=total_energy.index)
-
-                            plottext1 = f"Energielieferung an außerhalb der Energiegemeinschaft von ZP {meteringpointid[-6:]}"
-                            plottext2 = f"Energielieferung über unsere Energiegemeinschaft von ZP {meteringpointid[-6:]}"
-                            totalsumeg = np.nansum(energy_through_eg.values)
-                            shareeg = totalsumeg / np.nansum(total_energy.values) * 100
-                            if meteringpointids.unique().shape[0] == 1:
-                                sidetext += f"Insgesamt wurden {totalsumeg:.1f}kWh an die Energiegemeinschaft verkauft. \nDies ist {shareeg:.1f}% deiner gesamten erzeugten Energie in diesem Quartal.\n"
-                            else:
-                                sidetext += f"Von ZP {meteringpointid[-6:]} wurden {totalsumeg:.1f}kWh an die Energiegemeinschaft gelifert. \nDies ist {shareeg:.1f}% der erzeugten Energie in diesem Quartal.\n"
-                        except:
-                            pass
-                    else:
-                        try:
-                            total_energy = energydata.loc[:, pd.IndexSlice[meteringpointid, name, energydirection,
-                            "Gesamtverbrauch lt. Messung (bei Teilnahme gem. Erzeugung) [KWH]"]].sort_index()
-                            energy_through_eg = energydata.loc[:, pd.IndexSlice[meteringpointid, name, energydirection,
-                            "Eigendeckung gemeinschaftliche Erzeugung [KWH]"]].sort_index()
-                            energy_through_evu = pd.DataFrame((total_energy.values - energy_through_eg.values),
-                                                              index=total_energy.index)
-
-                            plottext1 = f"Energiebezug von Stromlieferant für ZP {meteringpointid[-6:]}"
-                            plottext2 = f"Energiebezug über unsere Energiegemeinschaft für ZP {meteringpointid[-6:]}"
-                            totalsumeg = np.nansum(energy_through_eg.values)
-                            shareeg = totalsumeg / np.nansum(total_energy.values) * 100
-                            if meteringpointids.unique().shape[0] == 1:
-                                sidetext += f"Insgesamt wurden {totalsumeg:.1f}kWh über die Energiegemeinschaft bezogen. \nDies ist {shareeg:.1f}% deines Gesamtenergieverbrauchs in diesem Quartal.\n"
-                            else:
-                                sidetext += f"Von ZP {meteringpointid[-6:]} wurden {totalsumeg:.1f}kWh über die Energiegemeinschaft bezogen. \nDies ist {shareeg:.1f}% des Verbrauchs in diesem Quartal.\n"
-                        except:
-                            print("Plotting hat nicht geklappt")
-                    parsing_dict[
-                        "TextfürVerbrauch"] = sidetext
-                    prepare_data_plotting_one_quantity(energy_through_evu, energy_through_eg,
-                                               axs, plottext1, plottext2, hatch, edgecolor)
-                    hatchnr += 1
+            for meteringpointid in targets:
+                series = read_series(energydirection, meteringpointid)
+                if series is None:
+                    where = "alle Zählpunkte" if meteringpointid is None else meteringpointid
+                    problems.append(f"{name}: keine Energiedaten für {energydirection} / {where} - "
+                                    f"dieser Teil fehlt in der Grafik")
+                    continue
+                # Modulo: edgecolors has only four entries, so a member with
+                # more series than that used to raise IndexError here.
+                hatch = hatches[hatchnr % len(hatches)]
+                edgecolor = edgecolors[hatchnr % len(edgecolors)]
+                sidetext += compose_sidetext(energydirection, meteringpointid,
+                                             single_meteringpoint,
+                                             series["total_eg"], series["share"])
+                parsing_dict["TextfürVerbrauch"] = sidetext
+                prepare_data_plotting_one_quantity(series["evu"], series["eg"],
+                                                   axs, series["text1"], series["text2"],
+                                                   hatch, edgecolor)
+                hatchnr += 1
 
         invoicetemplate.render(parsing_dict)
         # fig.set_size(3.49, 1.97)
@@ -536,29 +538,33 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         invoicetemplate.save(savepathdocx)
 
         def generate_pdf(doc_path, path):
-            pdf_path = pdf_path = doc_path.rsplit(".", 1)[0] + ".pdf"
+            """Convert one .docx to .pdf. Returns the pdf path, or None on failure.
+
+            Runs on a worker thread, so it must not touch Qt widgets - failures
+            are returned to the caller and reported once at the end.
+            """
+            pdf_path = doc_path.rsplit(".", 1)[0] + ".pdf"
             try:
                 convert(doc_path, pdf_path)
-                print("convert docx to pdf on windows with word installed")
-
-            except:
-
+            except Exception as word_error:
+                print(f"Word conversion failed ({word_error}), trying LibreOffice")
                 try:
                     subprocess.call(['soffice',
-                                     # '--headless',
+                                     '--headless',
                                      '--convert-to',
                                      'pdf',
                                      '--outdir',
                                      path,
                                      doc_path])
-                except Exception as e:
-                    errorbox = QMessageBox(f"Saving as .pdf didnot work (Neither Word or Libreoffice installed?) \n {e}")
-                    print(f"saving didnot work {e}")
-            return doc_path
+                except Exception as soffice_error:
+                    print(f"LibreOffice conversion failed too: {soffice_error}")
+                    return None
+            return pdf_path if os.path.exists(pdf_path) else None
 
-        # print(f"Save invoice of {name} to {os.path.join(savedirfp, f'{namefile}.pdf')}")
         print(f"Save invoice of {name} to {savedirfp}")
 
-        generate_pdf(savepathdocx, savedirfp)
-    finished()
-    return invoicetemplate
+        if generate_pdf(savepathdocx, savedirfp) is None:
+            problems.append(f"{name}: PDF-Erzeugung fehlgeschlagen - nur die .docx wurde gespeichert. "
+                            f"Ist Word oder LibreOffice installiert?")
+
+    return problems

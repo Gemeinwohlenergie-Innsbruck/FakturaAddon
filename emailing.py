@@ -413,13 +413,16 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
         email.add_attachment(content, maintype='application', subtype='pdf', filename=os.path.basename(fp_to_invoice))
 
     context = ssl.create_default_context()
-    # with smtplib.SMTP_SSL(host, 465, context=context) as server:
-    #     server.login(sender_email, password)
-    #     server.sendmail(
-    #         sender_email, receiver_email,email
-    #     )
 
-    with smtplib.SMTP(host,port,) as s:
+    # Without TLS the password and the invoice PDF cross the network in the
+    # clear. 465 is implicit TLS; 587 and friends upgrade via STARTTLS.
+    if int(port) == 465:
+        smtp_session = smtplib.SMTP_SSL(host, port, context=context)
+    else:
+        smtp_session = smtplib.SMTP(host, port)
+    with smtp_session as s:
+        if int(port) != 465:
+            s.starttls(context=context)
         s.login(sender_email, password)
         s.send_message(email,sender_email,receiver_email)
 
