@@ -514,15 +514,23 @@ class MainWindow(QtWidgets.QMainWindow):
                         date_str = datetime.date.today().strftime("%d_%m_%Y")
 
                         def save_csv(df, filepath, what):
+                            """Write one export file. Returns True only if it landed.
+
+                            The caller must stop on False: a half-written pair,
+                            where the transfers file exists and the direct debits
+                            do not, looks exactly like a clean run.
+                            """
                             if not filepath.lower().endswith(".csv"):
                                 filepath = f"{filepath}.csv"
                             print(f"Export {what} to: {filepath}")
                             try:
                                 df.to_csv(filepath, index=False, sep=";")
+                                return True
                             except Exception as e:
                                 print(f"Saving {what} failed: {e}")
                                 QMessageBox.critical(self, "Speichern fehlgeschlagen",
                                                      f"{what} konnten nicht gespeichert werden:\n{filepath}\n\n{e}")
+                                return False
 
                         filepath1 = load_filepath(self, "Wähle Speicherort für Export für SEPA Lastschrift aus",
                                                   filter="csv (*.csv)", fileex=False,
@@ -532,7 +540,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         if exportingdebit is not None:
                             if filepath1 is None:
                                 return
-                            save_csv(exportingdebit, filepath1, "Lastschriften")
+                            if not save_csv(exportingdebit, filepath1, "Lastschriften"):
+                                return
 
                         if exportingtransfer is not None:
                             homedir2 = os.path.dirname(filepath1) if filepath1 else self.home_directory
@@ -541,7 +550,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                       defaultfilename=f"Überweisungen_Infinity_export_{date_str}",
                                                       homedir=homedir2)
                             if filepath2 is not None:
-                                save_csv(exportingtransfer, filepath2, "Überweisungen")
+                                if not save_csv(exportingtransfer, filepath2, "Überweisungen"):
+                                    return
 
                         self.exportwindow.close()
                         self.exportwindow = None   # otherwise the menu entry needs two clicks next time
