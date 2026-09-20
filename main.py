@@ -996,6 +996,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
                         def closeEvent(self, event):
                             # The title-bar close button bypasses keyPressEvent.
+                            # Ignoring it outright would look like a frozen app
+                            # now that there is a Cancel button, so treat it the
+                            # same way: ask to stop, and let `finished` close us.
+                            self.request_cancel()
                             event.ignore()
 
                     def task_for_worker(callback):
