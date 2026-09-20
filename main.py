@@ -18,6 +18,7 @@ from importing import invoices,emails, masterdata,energydata,load_filepath, chec
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
 from selection import select_invoice_positions, members_with_invoices
 from config import ENV_PATH, load_env
+import config as config_module
 import validation
 import theme
 import i18n
@@ -742,8 +743,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Auto-load the templates named in .env. Both loaders return early on an
         # empty path, so an install with no templates configured still starts.
-        load_template_invoice_from_fp(self.config.get("template_export_invoice", ""))
-        load_emaildata_fp(self.config.get("template_email", ""))
+        load_template_invoice_from_fp(
+            config_module.resolve_resource(self.config.get("template_export_invoice", "")))
+        load_emaildata_fp(
+            config_module.resolve_resource(self.config.get("template_email", "")))
 
     def on_data_changed(self):
         """A file was loaded: re-evaluate the header and which steps are possible."""
@@ -1588,6 +1591,14 @@ def install_exception_dialog():
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    # Give matplotlib a writable cache next to the settings. In the frozen app
+    # it was rebuilding its font cache on every single launch because nothing
+    # it wrote ever persisted.
+    if getattr(sys, "frozen", False):
+        cache_dir = config_module._user_config_dir() / "matplotlib"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+
     app.setApplicationName("FakturaAddon")
     app.setOrganizationName("Energiegemeinschaft")
     # Before any widget exists - tr() is called while they are constructed.

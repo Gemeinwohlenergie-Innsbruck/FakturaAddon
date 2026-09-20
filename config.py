@@ -61,6 +61,32 @@ ENV_KEYS = {
 }
 
 
+def bundled_dir(*parts):
+    """Locate files shipped with the app, in a checkout and inside a bundle."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, *parts)
+
+
+def resolve_resource(path, subdir="templates"):
+    """Turn a configured template path into one that actually opens.
+
+    Settings hold bare filenames by default, which resolve against the working
+    directory - fine from a checkout, arbitrary for a double-clicked .app,
+    whose cwd is wherever Finder happened to start it. Fall back to the copy
+    shipped inside the bundle.
+    """
+    if not path:
+        return ""
+    if os.path.isabs(path) and os.path.exists(path):
+        return path
+    if os.path.exists(path):
+        return os.path.abspath(path)
+    bundled = bundled_dir(subdir, os.path.basename(path))
+    if os.path.exists(bundled):
+        return bundled
+    return path        # keep the configured value so the error names it
+
+
 def load_env() -> dict:
     """Read KEY=VALUE pairs from .env into a dict of internal field names."""
     values = {}

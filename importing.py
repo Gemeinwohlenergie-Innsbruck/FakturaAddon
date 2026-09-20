@@ -572,7 +572,7 @@ class SettingsDialog(QDialog):
         invoice_row.addWidget(self.edit_template_invoice)
         invoice_row.addWidget(invoice_browse)
 
-        self.edit_template_email = QLineEdit("email_template.html")
+        self.edit_template_email = QLineEdit("email_template_clean.html")
         email_row = QHBoxLayout()
         email_browse = QPushButton(tr("Durchsuchen…"))
         email_browse.clicked.connect(lambda: self._browse_file(self.edit_template_email, "HTML Files (*.html)"))

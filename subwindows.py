@@ -1,6 +1,5 @@
 import PyQt5.QtWidgets as QtWidgets
 import PyQt5.QtGui as QtGui
-from matplotlib.pyplot import title
 from bs4 import BeautifulSoup
 
 import imaplib

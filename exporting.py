@@ -1,18 +1,34 @@
 import os
 import pandas as pd
 import datetime as dt
-from docx2pdf import convert
 import numpy as np
 import subprocess
 import shutil
-import matplotlib.pyplot as plt
-from matplotlib.dates import DateFormatter,MonthLocator
-import matplotlib
-matplotlib.use('Agg')
 from io import BytesIO
 from PyQt5.QtWidgets import QMessageBox
 
 from i18n import tr
+
+
+# matplotlib and docx2pdf are imported on first use, not at module import.
+# Importing pyplot builds matplotlib's font cache, which in a frozen app costs
+# several seconds on *every* launch - paid before the window ever appeared,
+# even though nothing plots until invoices are generated.
+plt = None
+DateFormatter = None
+MonthLocator = None
+
+
+def _ensure_plotting():
+    """Import matplotlib on demand and pin the headless backend."""
+    global plt, DateFormatter, MonthLocator
+    if plt is not None:
+        return
+    import matplotlib
+    matplotlib.use("Agg")                       # must precede the pyplot import
+    import matplotlib.pyplot as _plt
+    from matplotlib.dates import DateFormatter as _DateFormatter, MonthLocator as _MonthLocator
+    plt, DateFormatter, MonthLocator = _plt, _DateFormatter, _MonthLocator
 
 
 def check_doubles(invoices):
@@ -257,6 +273,7 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
     lifecycle - this function no longer signals completion itself, because the
     old early `return None` skipped that signal and left the app hung.
     """
+    _ensure_plotting()
     problems = []
     # fullname = f"{personaldata['Name 1']} {personaldata['Name 2']}"
     debit,transfer, doublesprocess = check_doubles(invoicedata)
@@ -576,6 +593,7 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
             """
             pdf_path = doc_path.rsplit(".", 1)[0] + ".pdf"
             try:
+                from docx2pdf import convert     # imported here, not at startup
                 convert(doc_path, pdf_path)
             except Exception as word_error:
                 print(f"Word conversion failed ({word_error}), trying LibreOffice")
