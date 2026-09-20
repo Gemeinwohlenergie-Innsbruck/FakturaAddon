@@ -182,6 +182,10 @@ def load_energy_data(filepath = "", nc = False, qov = False):
                 if event.key() != Qt.Key_Escape:
                     super().keyPressEvent(event)
 
+            def closeEvent(self, event):
+                # The title-bar close button bypasses keyPressEvent entirely.
+                event.ignore()
+
 
         class Worker(QThread):
             finished = pyqtSignal(list)  # signal to return data
@@ -191,6 +195,10 @@ def load_energy_data(filepath = "", nc = False, qov = False):
                 super().__init__()
                 self.filepath = filepath
                 self.qov = qov
+                # Written before the signal is emitted and read after wait(),
+                # so the result does not depend on a queued slot having run.
+                self.result = None
+                self.error = None
 
             def run(self):
                 self.progress.emit("Loading Excel file...")
@@ -203,23 +211,14 @@ def load_energy_data(filepath = "", nc = False, qov = False):
                     data.index = pd.to_datetime(data.index, format="%d.%m.%Y %H:%M:%S")
                     data = data.sort_index()
 
-                    self.finished.emit([True,data])
+                    self.result = data
+                    self.finished.emit([True, data])
                 except Exception as e:
-                    self.finished.emit([False,f"There was an error loading: {e}"])
+                    self.error = f"There was an error loading: {e}"
+                    self.finished.emit([False, self.error])
 
         dlg = LoadingDialog("Laden, bitte warten...")
-        df_container = {}
-        load_error = {}
-
-        def on_finished(emit):
-            if emit[0]:
-                df_container["df"] = emit[1]
-            else:
-                load_error["message"] = emit[1]
-                print(emit[1])
-
         worker = Worker(filepath, qov)
-        worker.finished.connect(on_finished)
         worker.finished.connect(lambda _: dlg.accept())
 
         worker.start()
@@ -228,19 +227,22 @@ def load_energy_data(filepath = "", nc = False, qov = False):
         # of scope, otherwise Qt tears down a running QThread.
         worker.wait()
 
-        if load_error:
-            # Raised here rather than inside the signal handler, so the modal
-            # error box is not opened from within another modal dialog's loop.
+        if worker.error:
+            # Read off the worker rather than out of a queued slot: if the
+            # dialog ever stops running its event loop before the worker
+            # emits, the slot is never delivered and the loaded DataFrame is
+            # silently dropped.
+            print(worker.error)
             errorbox = QMessageBox()
             errorbox.setWindowTitle("Datei nicht lesbar")
             errorbox.setText("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"
-                             f"\n\n{load_error['message']}")
+                             f"\n\n{worker.error}")
             errorbox.exec_()
     else:
         print("Nextcloud loading")
         return None
 
-    return df_container.get("df")
+    return worker.result
 
 def load_faktura_member_export_template(filepath = "",nc =False, nc_instance = ''):
     print(f"Load {filepath}")

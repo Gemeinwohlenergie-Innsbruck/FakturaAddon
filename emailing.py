@@ -375,6 +375,12 @@ class Sendapproval(QDialog):
         self.result = event
         self.accept()
 
+# Every mail connection is made on the GUI thread, so an unresponsive server
+# with the default (infinite) socket timeout freezes the whole application
+# mid-run with no way out but force-quitting.
+MAIL_TIMEOUT = 30
+
+
 def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_email,receiver_forename,invquart,invyear, template,fp_to_invoice, masterdata,port = 587):
     email = EmailMessage()
 
@@ -417,12 +423,20 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
     # Without TLS the password and the invoice PDF cross the network in the
     # clear. 465 is implicit TLS; 587 and friends upgrade via STARTTLS.
     if int(port) == 465:
-        smtp_session = smtplib.SMTP_SSL(host, port, context=context)
+        smtp_session = smtplib.SMTP_SSL(host, port, context=context, timeout=MAIL_TIMEOUT)
     else:
-        smtp_session = smtplib.SMTP(host, port)
+        smtp_session = smtplib.SMTP(host, port, timeout=MAIL_TIMEOUT)
     with smtp_session as s:
         if int(port) != 465:
-            s.starttls(context=context)
+            try:
+                s.starttls(context=context)
+            except smtplib.SMTPNotSupportedError as e:
+                # Otherwise this surfaces once per recipient as an opaque
+                # library error, and the whole run fails without saying why.
+                raise RuntimeError(
+                    f"{host}:{port} bietet kein STARTTLS an. Bitte in den Einstellungen "
+                    f"den SMTP-Port auf 465 stellen oder den richtigen Server eintragen."
+                ) from e
         s.login(sender_email, password)
         s.send_message(email,sender_email,receiver_email)
 
@@ -449,7 +463,7 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
         return folder_name
 
     # SAVE TO SENT FOLDER
-    with imaplib.IMAP4_SSL(host, 993) as imap:
+    with imaplib.IMAP4_SSL(host, 993, timeout=MAIL_TIMEOUT) as imap:
         imap.login(sender_email, password)
         folder = ensure_folder(imap, "INBOX.Gesendete_Rechnungen")
         # show folders

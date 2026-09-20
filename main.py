@@ -839,18 +839,21 @@ class MainWindow(QtWidgets.QMainWindow):
                         def __init__(self, task_func):
                             super().__init__()
                             self.task_func = task_func
+                            # Written before the signal is emitted and read after
+                            # wait(), so the report does not depend on a queued
+                            # slot having been delivered.
+                            self.problems = []
 
                         def run(self):
-                            problems = []
                             try:
-                                problems = self.task_func(self.progress.emit) or []
+                                self.problems = self.task_func(self.progress.emit) or []
                             except Exception as e:
                                 traceback.print_exc()
-                                problems = [f"Abbruch durch einen Fehler: {e}"]
+                                self.problems = [f"Abbruch durch einen Fehler: {e}"]
                             finally:
                                 # Always emit. Any path that skipped this left the
                                 # dialog open and the thread running forever.
-                                self.finished.emit(problems)
+                                self.finished.emit(self.problems)
 
                     class StatusDialog(QDialog):
                         def __init__(self):
@@ -870,6 +873,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             if event.key() != Qt.Key_Escape:
                                 super().keyPressEvent(event)
 
+                        def closeEvent(self, event):
+                            # The title-bar close button bypasses keyPressEvent.
+                            event.ignore()
+
                     def task_for_worker(callback):
                         return produce_invoices_and_save(
                             self.energydata.data, self.invoices.data["detailed"], self.masterdata,
@@ -881,9 +888,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     worker = Worker(task_for_worker)
                     worker.moveToThread(thread)
 
-                    collected_problems = []
                     worker.progress.connect(dialog.update_text)
-                    worker.finished.connect(collected_problems.extend)
                     worker.finished.connect(thread.quit)
                     worker.finished.connect(lambda _: dialog.accept())
                     thread.started.connect(worker.run)
@@ -892,7 +897,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     dialog.exec_()
                     thread.wait()
 
-                    self.report_invoice_problems(collected_problems)
+                    # worker.problems, not a list filled by a queued slot: the
+                    # slot is only delivered while an event loop is running, so
+                    # a dialog that closed early would have reported a clean run
+                    # even when members were skipped.
+                    self.report_invoice_problems(worker.problems)
                 else:
                     print("no fp selected")
 

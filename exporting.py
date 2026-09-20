@@ -504,10 +504,11 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
                     problems.append(f"{name}: keine Energiedaten für {energydirection} / {where} - "
                                     f"dieser Teil fehlt in der Grafik")
                     continue
-                # Modulo: edgecolors has only four entries, so a member with
-                # more series than that used to raise IndexError here.
+                # Vary the hatch first and only advance the edge colour once
+                # the hatches wrap, so the pair stays unique for 11 x 4 series.
+                # Taking both modulo hatchnr made series 5 identical to series 1.
                 hatch = hatches[hatchnr % len(hatches)]
-                edgecolor = edgecolors[hatchnr % len(edgecolors)]
+                edgecolor = edgecolors[(hatchnr // len(hatches)) % len(edgecolors)]
                 sidetext += compose_sidetext(energydirection, meteringpointid,
                                              single_meteringpoint,
                                              series["total_eg"], series["share"])
