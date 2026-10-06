@@ -39,7 +39,18 @@ def resource_path(*parts):
 
 
 def logo_path():
+    """The wide wordmark, for the header band only."""
     return resource_path("assets", "gei_logo.png")
+
+
+def app_icon_path():
+    """The square mark, for the Dock, taskbar and window icon.
+
+    Never use logo_path() for this: it is 342x112, and handing a wide image to
+    setWindowIcon replaces the bundle's .icns in the Dock the moment the app
+    starts, so the icon visibly changes shape on launch.
+    """
+    return resource_path("assets", "app_icon.png")
 
 
 # --- palettes ---------------------------------------------------------------

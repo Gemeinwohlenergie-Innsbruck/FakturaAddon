@@ -1607,7 +1607,7 @@ def main():
     app.setOrganizationName("Energiegemeinschaft")
     # Before any widget exists - tr() is called while they are constructed.
     i18n.set_language(load_env().get("language", i18n.DEFAULT_LANGUAGE))
-    app.setWindowIcon(QtGui.QIcon(theme.logo_path()))
+    app.setWindowIcon(QtGui.QIcon(theme.app_icon_path()))
     # After the QApplication exists, so the system palette can be read.
     theme.apply(app)
     install_exception_dialog()

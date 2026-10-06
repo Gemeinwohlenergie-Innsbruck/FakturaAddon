@@ -9,17 +9,32 @@ Download `FakturaAddon-macos-arm64.dmg` from the
 [releases page](https://github.com/lstark-uibk/FakturaAddon/releases), open it,
 and drag **FakturaAddon** to Applications. Nothing else to install.
 
-**The first launch needs a right-click.** The app is not signed with an Apple
-Developer ID, so double-clicking it shows *"FakturaAddon cannot be opened
-because it is from an unidentified developer"*. Once only:
+**The first launch needs one extra step.** The app is not signed with an Apple
+Developer ID, so macOS refuses to open it until you say otherwise.
 
-> **Right-click** (or Ctrl-click) the app in Applications → **Open** →
-> **Open** in the dialog.
+On **macOS 15 (Sequoia) and later**, including macOS 26, Control-clicking the
+app no longer works — Apple removed that override. Instead:
 
-macOS remembers the choice; from then on it opens normally. Signing and
-notarising the build removes this step entirely — it needs an Apple Developer
-account, and the release workflow already does it if the signing secrets are
-present.
+> Double-click the app and dismiss the warning, then open
+> **System Settings → Privacy & Security**, scroll to **Security**, and click
+> **Open Anyway** next to the message about FakturaAddon. Authenticate, then
+> open the app again.
+
+Or, equivalently, from a terminal:
+
+```
+xattr -dr com.apple.quarantine /Applications/FakturaAddon.app
+```
+
+That removes the download quarantine flag, after which the app opens normally.
+Either way it is a one-off per installed copy — a new `.dmg` is quarantined
+again.
+
+On **macOS 14 and earlier**, Control-click → Open → Open still works.
+
+Signing and notarising the build removes this step entirely for everyone. It
+needs an Apple Developer account, and the release workflow already does it
+when the signing secrets are configured.
 
 The `.dmg` is built for **Apple Silicon** (M1 and later). An Intel Mac needs a
 separate build on a `macos-13` runner.
