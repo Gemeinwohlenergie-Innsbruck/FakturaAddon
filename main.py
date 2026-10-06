@@ -201,9 +201,13 @@ class ValidationDialog(QDialog):
                 validation.WARNING: tr("Warnung"),
                 validation.INFO: tr("Hinweis")}.get(severity, severity)
 
-    SEVERITY_COLOUR = {validation.ERROR: theme.ERROR,
-                       validation.WARNING: theme.WARNING,
-                       validation.INFO: theme.BLUE}
+    @staticmethod
+    def severity_colour(severity):
+        """Resolved per call - a class-level dict would freeze the light
+        palette at import, before the theme is known."""
+        return {validation.ERROR: theme.ERROR,
+                validation.WARNING: theme.WARNING,
+                validation.INFO: theme.BLUE}.get(severity, theme.MUTED)
 
     def __init__(self, findings, parent=None):
         super().__init__(parent)
@@ -238,7 +242,7 @@ class ValidationDialog(QDialog):
         for finding in findings:
             item = QtWidgets.QTreeWidgetItem(
                 [self.severity_label(finding.severity), finding.category, finding.message])
-            item.setForeground(0, QBrush(QColor(self.SEVERITY_COLOUR.get(finding.severity, "#333"))))
+            item.setForeground(0, QBrush(QColor(self.severity_colour(finding.severity))))
             for row in finding.rows:
                 item.addChild(QtWidgets.QTreeWidgetItem(["", "", str(row)]))
             # Expand short lists; a hundred names stays collapsed.
@@ -298,7 +302,7 @@ class WorkflowPanel(QtWidgets.QWidget):
             button.setMinimumWidth(240)
             reason = QLabel("")
             reason.setWordWrap(True)
-            reason.setStyleSheet("color: palette(mid);")
+            reason.setStyleSheet(f"color: {theme.MUTED};")
             grid.addWidget(marker, row, 0)
             grid.addWidget(button, row, 1)
             grid.addWidget(reason, row, 2)
@@ -332,7 +336,7 @@ class WorkflowPanel(QtWidgets.QWidget):
         else:
             reason = tr("bereit")
             marker.setText("▶")
-            marker.setStyleSheet(f"color: {theme.ORANGE_DARK}; font-weight: 600;")
+            marker.setStyleSheet(f"color: {theme.ACCENT_TEXT}; font-weight: 600;")
             self._buttons[key].setToolTip("")
         self._reasons[key].setText(reason)
 
@@ -519,7 +523,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # Missing asset must not cost us the header.
             logo.setText("Gemeinwohl Energie Innsbruck")
-            logo.setStyleSheet(f"color: {theme.INK}; font-weight: 600;")
+            logo.setStyleSheet(f"color: {theme.HEADER_INK}; font-weight: 600;")
         row.addWidget(logo)
 
         self.status_header = QLabel()
@@ -1604,7 +1608,8 @@ def main():
     # Before any widget exists - tr() is called while they are constructed.
     i18n.set_language(load_env().get("language", i18n.DEFAULT_LANGUAGE))
     app.setWindowIcon(QtGui.QIcon(theme.logo_path()))
-    app.setStyleSheet(theme.STYLESHEET)
+    # After the QApplication exists, so the system palette can be read.
+    theme.apply(app)
     install_exception_dialog()
     window = MainWindow()
     window.show()

@@ -61,6 +61,13 @@ ENV_KEYS = {
 }
 
 
+# Defaults shipped by earlier versions that never matched a real file.
+LEGACY_TEMPLATE_NAMES = {
+    "email_template.html": "email_template_clean.html",
+    "template_invoice.docx": "template_invoice_clean.docx",
+}
+
+
 def bundled_dir(*parts):
     """Locate files shipped with the app, in a checkout and inside a bundle."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -81,9 +88,21 @@ def resolve_resource(path, subdir="templates"):
         return path
     if os.path.exists(path):
         return os.path.abspath(path)
-    bundled = bundled_dir(subdir, os.path.basename(path))
+    name = os.path.basename(path)
+    bundled = bundled_dir(subdir, name)
     if os.path.exists(bundled):
         return bundled
+    # Settings written by older versions name templates that have never
+    # existed in this repository - the dialog's own defaults were wrong - so
+    # anyone upgrading carries a broken path forward. Map just those known
+    # names onto the file actually shipped; anything else the operator chose
+    # deliberately is left alone and reported as missing.
+    legacy = LEGACY_TEMPLATE_NAMES.get(name)
+    if legacy:
+        shipped = bundled_dir(subdir, legacy)
+        if os.path.exists(shipped):
+            print(f"Settings name {name!r}, which does not exist; using {legacy!r}")
+            return shipped
     return path        # keep the configured value so the error names it
 
 
