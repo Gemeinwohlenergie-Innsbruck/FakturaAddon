@@ -91,6 +91,34 @@ the mails members receive stay German. Everything here is editable from
 
 **`.env` holds passwords in plain text and is gitignored. Never commit it.**
 
+## Energy data straight from EEG Faktura
+
+Instead of downloading the Energy Report and loading it twice (Energiedaten
+and QoV), load the **Stammdaten** first and click **Von EEG Faktura…** on the
+Quartalsenergiedaten row. Pick the quarter and log in with your EEG Faktura
+account; both rows are filled from one download.
+
+- The community is taken from the loaded Stammdaten (its first sheet and
+  `Gemeinschafts-ID`), so for a second community just load that community's
+  Stammdaten. Energy data and member names can never come from two
+  different communities.
+- The API returns no names. Each metering point is matched to its member by
+  `Zählpunkt` in the Stammdaten, and named exactly as the Energy Report would
+  name it. Metering points with data but no Stammdaten row are listed and
+  left out; usually that means the Stammdaten export is older than a new
+  member.
+- The quarter is cut at midnight at its end. The API returns the whole of
+  the end day, which would otherwise bill a day of the next quarter.
+
+Invoice data (Rechnungsdaten) and Stammdaten still have to be downloaded by
+hand. Those API routes need a Keycloak token, and EEG Faktura does not allow
+desktop apps to log in for one.
+
+`tools/probe_eegfaktura_api.py` and `tools/compare_api_with_export.py` are
+read-only checks of which routes your login reaches and that the API matches
+an Excel export. Both ask for the password without echoing it and print no
+member data.
+
 ## Run
 
 ```

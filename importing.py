@@ -308,9 +308,12 @@ def load_masterdata(filepath, nc = False):
 
 def load_masterdata_meta(filepath):
     print(f"Load Metadata from {filepath}")
-    df = pd.read_excel(filepath, header=None, dtype=str)
+    workbook = pd.ExcelFile(filepath)
+    df = workbook.parse(workbook.sheet_names[0], header=None, dtype=str)
 
-    result = {}
+    # The first sheet is named after the tenant (e.g. CC100438); the API
+    # fetch needs it to say which community it is asking about.
+    result = {"Tenant": workbook.sheet_names[0]}
     for col in df.columns:
         col_values = df[col].tolist()  # remove empty cells
         col_values.append(np.nan)
@@ -694,3 +697,122 @@ class SettingsDialog(QDialog):
 
 
 
+
+
+class FetchEnergyDialog(QDialog):
+    """Pick the quarter and confirm the EEG Faktura login for an API fetch.
+
+    The community is not a choice here: it is whichever one the loaded member
+    list belongs to, so names and energy data cannot come from two different
+    communities.
+    """
+
+    def __init__(self, community_label, year, quarter, parent=None):
+        super().__init__(parent)
+        from PyQt5.QtWidgets import QSpinBox
+        import datetime
+        self.setWindowTitle(tr("Energiedaten von EEG Faktura laden"))
+        self.setMinimumWidth(460)
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        form.addRow(tr("Gemeinschaft:"), QLabel(community_label))
+        self.spin_year = QSpinBox()
+        self.spin_year.setRange(2020, datetime.date.today().year)
+        self.spin_year.setValue(year)
+        self.combo_quarter = QComboBox()
+        self.combo_quarter.addItems(["Q1", "Q2", "Q3", "Q4"])
+        self.combo_quarter.setCurrentIndex(quarter - 1)
+        period = QHBoxLayout()
+        period.addWidget(self.spin_year)
+        period.addWidget(self.combo_quarter)
+        period.addStretch(1)
+        form.addRow(tr("Quartal:"), period)
+
+        saved = load_env()
+        self.edit_user = QLineEdit(saved.get("user", ""))
+        self.edit_password = QLineEdit(saved.get("password", ""))
+        self.edit_password.setEchoMode(QLineEdit.Password)
+        form.addRow(tr("Benutzername:"), self.edit_user)
+        form.addRow(tr("Passwort:"), self.edit_password)
+        self.check_save = QCheckBox(tr("Zugangsdaten auf diesem Computer speichern"))
+        self.check_save.setChecked(bool(saved.get("password")))
+        form.addRow("", self.check_save)
+        layout.addLayout(form)
+
+        self.error_label = QLabel()
+        self.error_label.setVisible(False)
+        layout.addWidget(self.error_label)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText(tr("Laden"))
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        (self.edit_password if self.edit_user.text() else self.edit_user).setFocus()
+
+    def _on_accept(self):
+        if not self.edit_user.text().strip() or not self.edit_password.text():
+            self.error_label.setText(tr("Benutzername und Passwort sind erforderlich."))
+            self.error_label.setVisible(True)
+            return
+        if self.check_save.isChecked():
+            save_env({"user": self.edit_user.text().strip(),
+                      "password": self.edit_password.text()})
+        else:
+            # Unticking means "do not keep it", including a copy saved earlier.
+            save_env({"password": ""})
+        self.accept()
+
+    def values(self):
+        return {"user": self.edit_user.text().strip(),
+                "password": self.edit_password.text(),
+                "year": self.spin_year.value(),
+                "quarter": self.combo_quarter.currentIndex() + 1}
+
+
+def run_in_background(message, fn, parent=None):
+    """Run fn() off the UI thread behind a modal 'please wait' dialog.
+
+    Returns (result, error). Like load_energy_data, the outcome is read off
+    the worker after wait() rather than delivered through a queued slot.
+    """
+    class Worker(QThread):
+        done = pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self.result = None
+            self.error = None
+
+        def run(self):
+            try:
+                self.result = fn()
+            except Exception as e:          # shown to the operator, not swallowed
+                self.error = e
+            self.done.emit()
+
+    class Waiting(QDialog):
+        def keyPressEvent(self, event):
+            if event.key() != Qt.Key_Escape:
+                super().keyPressEvent(event)
+
+        def closeEvent(self, event):
+            event.ignore()
+
+    dlg = Waiting(parent)
+    dlg.setWindowTitle(tr("Laden"))
+    dlg.setModal(True)
+    box = QVBoxLayout(dlg)
+    label = QLabel(message)
+    label.setAlignment(Qt.AlignCenter)
+    box.addWidget(label)
+    dlg.resize(300, 80)
+
+    worker = Worker()
+    worker.done.connect(dlg.accept)
+    worker.start()
+    if worker.isRunning():
+        dlg.exec_()
+    worker.wait()
+    return worker.result, worker.error

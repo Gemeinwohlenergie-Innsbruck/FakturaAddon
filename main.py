@@ -14,7 +14,8 @@ from PyQt5 import QtWidgets, QtGui, QtCore
 from PyQt5.QtGui import QBrush, QColor
 import sys
 from PyQt5.QtWidgets import QLabel, QFileDialog, QMessageBox, QGridLayout, QTableWidget, QTableWidgetItem, QListWidget, QWidget, QListWidgetItem, QCheckBox, QListWidgetItem, QPushButton, QVBoxLayout, QDialog
-from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog
+from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog, FetchEnergyDialog, run_in_background
+import eegfaktura_api
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
 from selection import select_invoice_positions, members_with_invoices
 from config import ENV_PATH, load_env
@@ -134,6 +135,9 @@ class FileLoadPanel(QtWidgets.QWidget):
         grid.setColumnStretch(0, 0)
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(2, 0)
+        grid.setColumnStretch(3, 0)
+        self._grid = grid
+        self._rows = {key: row for row, (key, _) in enumerate(rows)}
         self._buttons = {}
         for row, (key, label) in enumerate(rows):
             name = QLabel(tr(label))
@@ -152,6 +156,14 @@ class FileLoadPanel(QtWidgets.QWidget):
 
     def set_handler(self, key, handler):
         self._buttons[key].clicked.connect(handler)
+
+    def add_action(self, key, text, tooltip, handler):
+        """A second button on a row, for loading it some other way."""
+        button = QPushButton(text)
+        button.setToolTip(tooltip)
+        button.clicked.connect(handler)
+        self._grid.addWidget(button, self._rows[key], 3)
+        return button
 
     def set_path(self, key, path):
         """Show a loaded file by name, with the full path on hover."""
@@ -720,6 +732,61 @@ class MainWindow(QtWidgets.QMainWindow):
             if filepath is not None:
                 load_energydata_fp(filepath, load_qov=load_qov)
 
+        def fetch_energy_from_api():
+            """Energiedaten and QoV for one quarter, straight from EEG Faktura.
+
+            Needs the member list first: it names the community to ask and
+            supplies the member names the API does not return.
+            """
+            meta = self.masterdata.metadata or {}
+            tenant, ec_id = eegfaktura_api.community_from_meta(meta)
+            if self.masterdata.data is None or not (tenant and ec_id):
+                QMessageBox.information(
+                    self, tr("Zuerst die Stammdaten laden"),
+                    tr("Die Energiedaten werden über die EEG Faktura Stammdaten der "
+                       "Gemeinschaft und ihren Mitgliedern zugeordnet.\n\n"
+                       "Bitte zuerst die Stammdaten der gewünschten Gemeinschaft laden."))
+                return
+            period = None
+            if self.invoices.data is not None:
+                period = eegfaktura_api.parse_billing_period(self.thisinvoices_year,
+                                                             self.thisinvoice_quart)
+            year, quarter = period or eegfaktura_api.last_complete_quarter()
+            name = str(meta.get("Kurzname") or "").strip()
+            dlg = FetchEnergyDialog(f"{name} ({tenant})" if name else tenant,
+                                    year, quarter, parent=self)
+            if dlg.exec_() != QDialog.Accepted:
+                return
+            v = dlg.values()
+            members = self.masterdata.data
+            result, error = run_in_background(
+                tr("Energiedaten werden von EEG Faktura geladen…"),
+                lambda: eegfaktura_api.fetch_quarter(v["user"], v["password"], tenant, ec_id,
+                                                     v["year"], v["quarter"], members),
+                parent=self)
+            if error is not None:
+                QMessageBox.warning(self, tr("Laden fehlgeschlagen"), str(error))
+                return
+            energy, qov, unmatched = result
+            self.energydata.data = energy
+            self.energydata.metadata = qov
+            self.reload_table_view("0_1", energy)
+            source = f"EEG Faktura · {tenant} · {v['year']} Q{v['quarter']}"
+            panel.set_path("energy", source)
+            panel.set_path("energy_qov", source)
+            self.on_data_changed()
+            if unmatched:
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Warning)
+                box.setWindowTitle(tr("Zählpunkte ohne Mitglied"))
+                box.setText(tr("{n} Zählpunkt(e) haben Energiedaten, stehen aber nicht in "
+                               "den geladenen Stammdaten. Ihre Daten wurden nicht übernommen.",
+                               n=len(unmatched)))
+                box.setInformativeText(tr("Meist sind das neue Mitglieder: aktuelle Stammdaten "
+                                          "aus EEG Faktura laden und erneut abrufen."))
+                box.setDetailedText("\n".join(unmatched))
+                box.exec_()
+
         def load_emaildata_fp(filepath):
             if not filepath:
                 return
@@ -744,6 +811,9 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         for key, handler in handlers.items():
             panel.set_handler(key, handler)
+        panel.add_action("energy", tr("Von EEG Faktura…"),
+                         tr("Energiedaten und QoV für ein Quartal direkt aus EEG Faktura laden"),
+                         fetch_energy_from_api)
 
         # Auto-load the templates named in .env. Both loaders return early on an
         # empty path, so an install with no templates configured still starts.

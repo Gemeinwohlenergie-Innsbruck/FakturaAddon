@@ -321,4 +321,31 @@ EN = {
     "Mitgliedsbeitrag und Stromkosten)??":
         "Do you want every item listed separately \n(e.g. a separate transfer for "
         "membership fee and electricity)?",
+
+    # --- energy data from the EEG Faktura API ------------------------------
+    "Von EEG Faktura…": "From EEG Faktura…",
+    "Energiedaten und QoV für ein Quartal direkt aus EEG Faktura laden":
+        "Load a quarter's energy data and QoV straight from EEG Faktura",
+    "Energiedaten von EEG Faktura laden": "Load energy data from EEG Faktura",
+    "Gemeinschaft:": "Community:",
+    "Quartal:": "Quarter:",
+    "Benutzername:": "Username:",
+    "Passwort:": "Password:",
+    "Zugangsdaten auf diesem Computer speichern": "Save the login on this computer",
+    "Benutzername und Passwort sind erforderlich.": "Username and password are required.",
+    "Laden": "Load",
+    "Energiedaten werden von EEG Faktura geladen…": "Loading energy data from EEG Faktura…",
+    "Laden fehlgeschlagen": "Loading failed",
+    "Zuerst die Stammdaten laden": "Load the member data first",
+    "Die Energiedaten werden über die EEG Faktura Stammdaten der Gemeinschaft und ihren "
+    "Mitgliedern zugeordnet.\n\nBitte zuerst die Stammdaten der gewünschten Gemeinschaft laden.":
+        "Energy data is matched to the community and its members through the EEG Faktura "
+        "member data.\n\nPlease load the member data of the community you want first.",
+    "Zählpunkte ohne Mitglied": "Metering points without a member",
+    "{n} Zählpunkt(e) haben Energiedaten, stehen aber nicht in den geladenen Stammdaten. "
+    "Ihre Daten wurden nicht übernommen.":
+        "{n} metering point(s) have energy data but are not in the loaded member data. "
+        "Their data was left out.",
+    "Meist sind das neue Mitglieder: aktuelle Stammdaten aus EEG Faktura laden und erneut abrufen.":
+        "Usually these are new members: load current member data from EEG Faktura and fetch again.",
 }
