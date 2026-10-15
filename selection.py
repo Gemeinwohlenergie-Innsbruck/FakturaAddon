@@ -28,8 +28,22 @@ def select_invoice_positions(invoice_list, invoice_details, selected_mask):
             f"{len(invoice_list)} rows"
         )
     selected_names = invoice_list.loc[mask, "Empfänger Name"]
-    details = invoice_details[invoice_details["Empfänger Name"].isin(selected_names)]
+    if "Nummer" in invoice_list.columns and "Nummer" in invoice_details.columns:
+        # By document, not by person: someone with an invoice and a credit
+        # note has two rows, and selecting by name brought in both documents
+        # when only one was ticked.
+        selected = set(invoice_list.loc[mask, "Nummer"].map(_document_key))
+        details = invoice_details[invoice_details["Nummer"].map(_document_key).isin(selected)]
+    else:
+        details = invoice_details[invoice_details["Empfänger Name"].isin(selected_names)]
     return details, selected_names
+
+
+def _document_key(value):
+    """Document numbers as text: Excel hands back 1017 as 1017.0."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
 
 
 def _name_key(first, last):
@@ -73,3 +87,15 @@ def members_with_invoices(masterdata, invoice_details,
     ]
     columns = [master_first, master_last, "E-Mail"]
     return masterdata.loc[mask, columns].drop_duplicates()
+
+
+def documents_of_member(invoice_list, first, last,
+                        invoice_first="Empfänger Vorame", invoice_last="Empfänger Nachname"):
+    """Document numbers of the member with this (first, last) name pair."""
+    if "Nummer" not in invoice_list.columns:
+        return []
+    wanted = _name_key(first, last)
+    return [_document_key(number)
+            for number, f, l in zip(invoice_list["Nummer"], invoice_list[invoice_first],
+                                    invoice_list[invoice_last])
+            if _name_key(f, l) == wanted]

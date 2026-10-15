@@ -34,26 +34,25 @@ def _ensure_plotting():
 def check_doubles(invoices):
     debit = invoices[(invoices["Dokumenttyp"] == "Rechnung")]
     transfer = invoices[(invoices["Dokumenttyp"] == "Gutschrift")|(invoices["Dokumenttyp"] == "Information")]
-    debitdoubles = debit["Empfänger Name"][debit["Empfänger Name"].isin(transfer["Empfänger Name"])].index
-    transferdoubles = transfer["Empfänger Name"][transfer["Empfänger Name"].isin(debit["Empfänger Name"])].index
     doublesprocess = {"Name":[],"Debit":[],"Transfer":[],"Type":[],"Final":[]}
-    for i,j in zip(debitdoubles,transferdoubles):
-        doublesprocess["Name"].append(debit.loc[i,"Empfänger Name"])
-        doublesprocess["Debit"].append(debit.loc[i,"Pos. Bruttobetrag"])
-        doublesprocess["Transfer"].append(transfer.loc[j,"Pos. Bruttobetrag"])
-        if debit.loc[i,'Pos. Bruttobetrag'] < transfer.loc[j,'Pos. Bruttobetrag']:
-            finalsum = transfer.loc[j,'Pos. Bruttobetrag'] - debit.loc[i,'Pos. Bruttobetrag']
-            # transfer.loc[j, 'Pos. Bruttobetrag'] = finalsum
-            # debit = debit.drop(i)
+    # Per person, over all their positions. This used to zip the row indices
+    # of the two frames, which pairs the i-th debit position with the i-th
+    # credit position - different people as soon as two people have both.
+    credited = set(transfer["Empfänger Name"])
+    for name in debit["Empfänger Name"].unique():
+        if name not in credited:
+            continue
+        debit_sum = round(debit.loc[debit["Empfänger Name"] == name, "Pos. Bruttobetrag"].sum(), 2)
+        transfer_sum = round(transfer.loc[transfer["Empfänger Name"] == name, "Pos. Bruttobetrag"].sum(), 2)
+        doublesprocess["Name"].append(name)
+        doublesprocess["Debit"].append(debit_sum)
+        doublesprocess["Transfer"].append(transfer_sum)
+        if debit_sum < transfer_sum:
             doublesprocess["Type"].append("Überweisung")
-            doublesprocess["Final"].append(finalsum)
-
+            doublesprocess["Final"].append(round(transfer_sum - debit_sum, 2))
         else:
-            finalsum = debit.loc[i,'Pos. Bruttobetrag'] - transfer.loc[j,'Pos. Bruttobetrag']
-            # debit.loc[i, 'Pos. Bruttobetrag'] = finalsum
-            # transfer = transfer.drop(j)
             doublesprocess["Type"].append("Lastschrift")
-            doublesprocess["Final"].append(finalsum)
+            doublesprocess["Final"].append(round(debit_sum - transfer_sum, 2))
 
     return debit,transfer, doublesprocess
 
@@ -78,7 +77,10 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
        'Geschäftsvorfallcode', 'Dringlichkeit', 'Auftraggeber IBAN',
        'Abweichender Auftraggeber']
         if datatype == "debit":
-            exportline = pd.Series([""] * len(columns_debit_export), index=columns_debit_export)
+            # dtype=object: under pandas 3 a Series of "" is a strict string
+            # Series and refuses the amount, so every export failed on its
+            # first line (the v2.0.3 build ships pandas 3.0.6).
+            exportline = pd.Series([""] * len(columns_debit_export), index=columns_debit_export, dtype=object)
             exportline["Fälligkeitsdatum"] = dt.datetime.today().strftime("%d.%m.%Y")
             matchingdictinvoice = {
                 "Zahlungspflichtiger Name": "Empfänger Name",
@@ -108,7 +110,7 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
 
 
         elif datatype == "transfer":
-            exportline = pd.Series([""] * len(columns_transfer_export), index=columns_transfer_export)
+            exportline = pd.Series([""] * len(columns_transfer_export), index=columns_transfer_export, dtype=object)
             exportline["Durchführungsdatum"] = dt.datetime.today().strftime("%d.%m.%Y")
             matchingdictinvoice = {
                 "Empfänger Name": "Empfänger Name",
@@ -137,7 +139,7 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
             return y[1], y[2]
 
         year, quartal = get_quartal_out_of_str(invoicelistline["Abrechnung"])
-        exportline["Zahlungsreferenz/Verwendungszweck"] = f"{EEG_name} Rechung {year} Quartal {quartal}"
+        exportline["Zahlungsreferenz/Verwendungszweck"] = f"{EEG_name} Rechnung {year} Quartal {quartal}"
 
         return exportline
 
@@ -196,9 +198,14 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
             doubles_names = debitexport[debitexport['Zahlungspflichtiger Name'].isin(transferexport['Empfänger Name'])]['Zahlungspflichtiger Name']
             for double_name in doubles_names:
                 print(double_name)
-                diff = debitexport.loc[debitexport['Zahlungspflichtiger Name'] == double_name, 'Betrag in EUR'].values[0] -transferexport.loc[transferexport['Empfänger Name'] == double_name, 'Betrag in EUR'].values[0]
+                diff = round(debitexport.loc[debitexport['Zahlungspflichtiger Name'] == double_name, 'Betrag in EUR'].values[0] -transferexport.loc[transferexport['Empfänger Name'] == double_name, 'Betrag in EUR'].values[0], 2)
                 # if diff > 0  --> more debit than transfer
-                if diff > 0:
+                if diff == 0:
+                    # Debit and credit cancel out. Before, this fell through
+                    # to the credit branch and wrote a 0,00 transfer.
+                    debitexport = debitexport.loc[~(debitexport['Zahlungspflichtiger Name'] == double_name),:].reset_index(drop=True)
+                    transferexport = transferexport.loc[~(transferexport['Empfänger Name'] == double_name),:].reset_index(drop=True)
+                elif diff > 0:
                     print("We have more debit than transfer")
                     debitexport.loc[debitexport['Zahlungspflichtiger Name'] == double_name, 'Betrag in EUR'] = diff
                     transferexport = transferexport.loc[~(transferexport['Empfänger Name'] == double_name),:].reset_index(drop=True)
@@ -262,6 +269,46 @@ def resolve_name_in_energydata(energydata, name):
     return None
 
 
+def net_member_positions(debits_this, transfers_this):
+    """One person's debit and credit positions as a single document.
+
+    Returns ("Rechnung" | "Gutschrift", positions), where the side being
+    netted off is negative - VAT included, or the VAT column contradicted the
+    net and gross beside it. Debit equal to credit is a Rechnung over 0.00;
+    it used to match neither branch and print debit PLUS credit.
+    """
+    debits_this, transfers_this = debits_this.copy(), transfers_this.copy()
+    diff = round(debits_this["Pos. Bruttobetrag"].sum(axis=0) - transfers_this["Pos. Bruttobetrag"].sum(axis=0), 2)
+    signed = [c for c in ('Pos. Nettobetrag', 'Pos. UST Betrag', 'Pos. Bruttobetrag')
+              if c in debits_this.columns]
+    # + 0.0 turns -0.0 into 0.0, which would otherwise print as "-0.00".
+    if diff >= 0:
+        kind = "Rechnung"
+        transfers_this.loc[:, signed] = -transfers_this.loc[:, signed] + 0.0
+    else:
+        kind = "Gutschrift"
+        debits_this.loc[:, signed] = -debits_this.loc[:, signed] + 0.0
+    return kind, pd.concat([debits_this, transfers_this], axis=0)
+
+
+def format_quantity(value, unit):
+    """"2.81 kWh"; nothing for fees, which EEG Faktura exports without a
+    quantity - astype(str) printed "nan" on the member's invoice."""
+    if value is None or pd.isna(value):
+        return ""
+    unit = "" if unit is None or pd.isna(unit) else str(unit)
+    return f"{float(value):.2f} {unit}".strip()
+
+
+def format_unit_price(value):
+    """At least two decimals, up to four: 12.5 ct is 0.125 €/kWh, and
+    rounding it to 0.12 showed a price that does not multiply out to the
+    amount charged."""
+    text = f"{float(value):.4f}".rstrip("0")
+    whole, _, decimals = text.partition(".")
+    return f"{whole}.{decimals.ljust(2, '0')}"
+
+
 def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,savedirfp,callback,
                               should_cancel=None):
     """Render and save one invoice per member.
@@ -291,36 +338,26 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         invoicethis = invoicedata[invoicedata["Empfänger Name"] == name]
         debits_this =  debit[debit["Empfänger Name"] == name]
         transfers_this = transfer[transfer["Empfänger Name"] == name]
-        total_transfer_debit = "Rechnung"
-        #if diff > 0 debit bigger than transfer -> Rechnung otherwise Gutschrift
-        diff = debits_this["Pos. Bruttobetrag"].sum(axis = 0) -transfers_this["Pos. Bruttobetrag"].sum(axis = 0)
-        if diff > 0:
-            total_transfer_debit = "Rechnung"
-            transfers_this.loc[:,['Pos. Nettobetrag','Pos. Bruttobetrag']]= -transfers_this.loc[:,['Pos. Nettobetrag','Pos. Bruttobetrag']]
-
-        if diff < 0:
-            total_transfer_debit = "Gutschrift"
-            debits_this.loc[:,['Pos. Nettobetrag','Pos. Bruttobetrag']]= -debits_this.loc[:,['Pos. Nettobetrag','Pos. Bruttobetrag']]
-
-
-
-
-        all_position_for_tbl = pd.concat([debits_this,transfers_this], axis = 0)
+        total_transfer_debit, all_position_for_tbl = net_member_positions(debits_this, transfers_this)
         postext =  all_position_for_tbl.copy()
         postext.loc[postext['Pos. Text'].str.contains('Mitgliedsgebuer'),'Pos. Text'] = ''
         all_position_for_tbl['Pos. Invoicetext'] = (all_position_for_tbl['Pos. Tarif'] + "\n"+ postext['Pos. Text'])
         all_position_for_tbl['Pos. Preis / Einheit'] = all_position_for_tbl['Pos. Preis / Einheit'].astype(float)
 
-        all_position_for_tbl['Pos. Menge'] = all_position_for_tbl['Pos. Menge'].astype(str) + " " + all_position_for_tbl[ 'Pos. Mengeneinheit'].fillna("")
+        all_position_for_tbl['Pos. Menge'] = [format_quantity(q, u) for q, u in zip(
+            all_position_for_tbl['Pos. Menge'], all_position_for_tbl['Pos. Mengeneinheit'])]
         all_position_for_tbl.loc[all_position_for_tbl['Pos. Preis / Einheit Euro/Cent'] == "Ct",'Pos. Preis / Einheit'] = all_position_for_tbl.loc[all_position_for_tbl['Pos. Preis / Einheit Euro/Cent'] == "Ct",'Pos. Preis / Einheit']/ 100
-        sumnetto = str(round(all_position_for_tbl['Pos. Nettobetrag'].sum(),2))
-        sumbrutto = str(round(all_position_for_tbl['Pos. Bruttobetrag'].sum(),2))
+        # Two decimals, like every other amount on the invoice: str(round())
+        # printed 12.5 for 12.50.
+        sumnetto = f"{all_position_for_tbl['Pos. Nettobetrag'].sum():.2f}"
+        sumbrutto = f"{all_position_for_tbl['Pos. Bruttobetrag'].sum():.2f}"
 
 
 
         cols_for_tbl = ['Pos. Invoicetext','Pos. Menge','Pos. Preis / Einheit','Pos. Nettobetrag','Pos. UST %','Pos. UST Betrag','Pos. Bruttobetrag']
-        moneycols = ['Pos. Preis / Einheit','Pos. Nettobetrag','Pos. UST Betrag','Pos. Bruttobetrag']
+        moneycols = ['Pos. Nettobetrag','Pos. UST Betrag','Pos. Bruttobetrag']
         all_position_for_tbl[moneycols] = all_position_for_tbl[moneycols].map("{0:.2f}".format)
+        all_position_for_tbl['Pos. Preis / Einheit'] = all_position_for_tbl['Pos. Preis / Einheit'].map(format_unit_price)
         all_position_for_tbl = all_position_for_tbl[cols_for_tbl]
 
         invoicequart = invoicethis["Abrechnung"].iloc[0]

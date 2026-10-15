@@ -123,3 +123,31 @@ def test_missing_surname_matches_on_first_name_alone():
 def test_no_invoices_selects_nobody(masterdata):
     empty = pd.DataFrame({"Empfänger Vorame": [], "Empfänger Nachname": []})
     assert members_with_invoices(masterdata, empty).empty
+
+
+# --- by document, not by person ---------------------------------------------
+
+def test_only_the_ticked_document_of_a_person_is_selected():
+    """Anna has an invoice and a credit note; only the credit note is ticked."""
+    invoice_list = pd.DataFrame({
+        "Nummer": [1001, 1002],
+        "Empfänger Name": ["Anna Müller", "Anna Müller"],
+        "Dokumenttyp": ["Rechnung", "Gutschrift"],
+    })
+    invoice_details = pd.DataFrame({
+        "Nummer": [1001.0, 1001.0, 1002.0],
+        "Empfänger Name": ["Anna Müller"] * 3,
+        "Pos. Bruttobetrag": [40.0, 12.0, 30.0],
+    })
+    details, _ = select_invoice_positions(invoice_list, invoice_details, [False, True])
+    assert list(details["Pos. Bruttobetrag"]) == [30.0]
+
+
+def test_documents_of_a_member_are_found_by_name_pair():
+    from selection import documents_of_member
+    invoice_list = pd.DataFrame({
+        "Nummer": [1001.0, 1002.0, 1003.0],
+        "Empfänger Vorame": ["Anna", "Anna ", "Peter"],
+        "Empfänger Nachname": ["Müller", "Müller", "Müller"],
+    })
+    assert documents_of_member(invoice_list, "Anna", "Müller") == ["1001", "1002"]
