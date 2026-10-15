@@ -109,15 +109,33 @@ account; both rows are filled from one download.
   member.
 - The quarter is cut at midnight at its end. The API returns the whole of
   the end day, which would otherwise bill a day of the next quarter.
+- Cells are left empty exactly where the export leaves them empty: no
+  reading delivered (quality L0), or outside the member's `aktiviert` –
+  `deaktiviert` period. A meter that changed hands gets columns for each
+  holder. Rebuilding a real export this way reproduces it cell for cell.
+- Quality comes per value (L0 none, L1 measured, L2 substitute, L3 faulty).
+  Newer EEG Faktura versions drop the *QoV Log* sheet from the Energy Report
+  and mark quality by cell colour instead, which the Excel import cannot
+  read; the API import does not depend on it.
+
+Energy data for a quarter keeps changing for weeks after it ends, as grid
+operators send corrected allocations. Fetch it when you create the invoices,
+not earlier, and after the billing run you are invoicing.
 
 Invoice data (Rechnungsdaten) and Stammdaten still have to be downloaded by
 hand. Those API routes need a Keycloak token, and EEG Faktura does not allow
 desktop apps to log in for one.
 
 `tools/probe_eegfaktura_api.py` and `tools/compare_api_with_export.py` are
-read-only checks of which routes your login reaches and that the API matches
-an Excel export. Both ask for the password without echoing it and print no
-member data.
+read-only checks of which routes your login reaches and that the API import
+matches an Excel export cell by cell (download the export the same day).
+Both ask for the password without echoing it and print no member data.
+
+Two quirks of the EEG Faktura server are handled: it answers every failed
+login with 403, and it decodes Basic credentials as URL-safe base64, which
+breaks some passwords containing `?`, `>`, `~` or non-ASCII characters. The
+app retries those correctly. Passwords containing `:` cannot work with the
+API at all, and the app says so.
 
 ## Run
 

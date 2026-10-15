@@ -1,81 +1,136 @@
-"""Check the API's value slots against an Energy Report export of the same quarter.
+"""Check the API import against an Energy Report export, cell by cell.
 
-    .venv/bin/python tools/compare_api_with_export.py ~/Downloads/CC100438-Energy-Report-20260401_20260630.xlsx
+    .venv/bin/python tools/compare_api_with_export.py ENERGY_REPORT.xlsx STAMMDATEN.xlsx
 
-Asks for the EEG Faktura login (password via getpass, never echoed or
-stored), fetches the export's period from the API, and for every metercode
-reports which API slot reproduces it. Prints numbers only, no member data.
-Read-only: one POST to /energystore/query/rawdata.
+Runs the app's own API import (eegfaktura_api.fetch_quarter) for the
+export's quarter and community, and compares the result with the export as
+the app loads it. Asks for the EEG Faktura password with getpass, never
+echoes or stores it, and prints only counts, dates and community totals -
+no member data. Read-only: one POST to /energystore/query/rawdata.
+
+Download both files the same day you run this. Grid operators correct
+allocations for weeks after a quarter ends, so an older export differs from
+today's data in "Anteil" and "Eigendeckung" without anything being wrong.
 """
 import getpass
 import os
 import sys
-from collections import Counter
 
 import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import eegfaktura_api as api   # noqa: E402
+import eegfaktura_api as api                                  # noqa: E402
+from importing import load_masterdata_meta                   # noqa: E402
+
+TOLERANCE = 1e-6        # the export rounds to 6 decimals
 
 
-def main(path):
-    excel = pd.read_excel(path, sheet_name="Energiedaten", skiprows=[7, 8, 9],
-                          header=[1, 2, 3, 6], index_col=[0])
-    excel.index = pd.to_datetime(excel.index, format="%d.%m.%Y %H:%M:%S")
-    excel = excel.sort_index()
-    first = excel.index[0]
+def read_export(path):
+    energy = pd.read_excel(path, sheet_name="Energiedaten", skiprows=[7, 8, 9],
+                           header=[1, 2, 3, 6], index_col=[0])
+    energy.index = pd.to_datetime(energy.index, format="%d.%m.%Y %H:%M:%S")
+    energy = energy.sort_index()
+    try:
+        qov = pd.read_excel(path, sheet_name="QoV Log", skiprows=[7, 8, 9],
+                            header=[1, 2, 3, 6], index_col=[0])
+        qov.index = pd.to_datetime(qov.index, format="%d.%m.%Y %H:%M:%S")
+    except ValueError:
+        qov = None          # newer exports mark quality by cell colour instead
+    return energy, qov
+
+
+def labels_by_column(qov):
+    """Value column -> its QoV labels (the column right after it)."""
+    if qov is None:
+        return {}
+    cols = list(qov.columns)
+    return {c: qov.iloc[:, i + 1] for i, c in enumerate(cols)
+            if c[0] != "QoV" and i + 1 < len(cols) and cols[i + 1][0] == "QoV"}
+
+
+def main(export_path, members_path):
+    export, export_qov = read_export(export_path)
+    members = pd.read_excel(members_path, sheet_name="Mitglieder")
+    tenant, ec_id = api.community_from_meta(load_masterdata_meta(members_path))
+    first = export.index[0]
     year, quarter = first.year, (first.month - 1) // 3 + 1
-    tenant = os.path.basename(path).split("-")[0]
-    print(f"Export: {tenant} {year} Q{quarter}, {excel.shape[1]} columns, {len(excel)} rows\n")
+    print(f"\nExport: {tenant} {year} Q{quarter}, {export.shape[1]} columns, {len(export)} rows")
 
     user = input("EEG Faktura username (email): ").strip()
     password = getpass.getpass("Password (not echoed): ")
-    ec_id = input("ecId (Gemeinschafts-ID from the member list): ").strip()
-    start, end = api.quarter_range(year, quarter)
-    raw = api.fetch_rawdata(user, password, tenant, ec_id, start, end)
+    energy, qov, unmatched = api.fetch_quarter(user, password, tenant, ec_id,
+                                               year, quarter, members)
     password = None
 
-    qov_shapes = Counter()
-    # metercode -> slot -> list of max abs differences, one per meter
-    diffs = {}
-    compared = 0
-    for meter, entry in raw.items():
-        samples = entry.get("data") or []
-        if not samples or meter not in excel.columns.get_level_values(0):
-            continue
-        q = samples[0].get("qov")
-        qov_shapes[f"{type(q).__name__}" + (f"[{len(q)}] e.g. {q}" if isinstance(q, list) else f" e.g. {q!r}")] += 1
-        index = (pd.to_datetime([s["ts"] for s in samples], unit="ms", utc=True)
-                 .tz_convert(api.TIMEZONE))
-        keep = (index >= start) & (index < end)
-        values = np.array([[np.nan if v is None else v for v in (s.get("value") or [])] + [np.nan] * 3
-                           for s in samples], dtype=float)[keep, :3]
-        local = index[keep].tz_localize(None)
-        sub = excel.xs(meter, level=0, axis=1)
-        compared += 1
-        for col in sub.columns:
-            metercode = col[-1]
-            target = sub[col].reindex(local).to_numpy(dtype=float)
-            for slot in range(3):
-                d = np.nanmax(np.abs(values[:, slot] - target)) if np.isfinite(values[:, slot]).any() else np.inf
-                diffs.setdefault(metercode, {}).setdefault(slot, []).append(d)
+    problems = 0
+    print(f"\nAPI:    {energy.shape[1]} columns, {len(energy)} rows, "
+          f"{len(unmatched)} metering point(s) with readings but no member")
+    problems += len(unmatched)
 
-    print(f"\nMeters compared: {compared}")
-    print("qov shapes:", dict(qov_shapes))
-    print("\nmetercode -> worst difference per API slot (0 = identical)")
-    for metercode, slots in diffs.items():
-        worst = {slot: max(v) for slot, v in slots.items()}
-        best = min(worst, key=worst.get)
-        print(f"  slot {best}  {metercode}")
-        print("          " + ", ".join(f"slot {s}: {w:.4g}" for s, w in sorted(worst.items())))
-    print("\nThe app assumes:")
-    for direction, codes in api.METERCODES.items():
-        for slot, code in codes:
-            print(f"  slot {slot}  {direction:<11}  {code}")
+    only_api = set(energy.columns) - set(export.columns)
+    only_export = set(export.columns) - set(energy.columns)
+    print(f"Columns: {len(only_export)} only in the export, {len(only_api)} only from the API")
+    problems += len(only_api) + len(only_export)
+
+    same_index = energy.index.equals(export.index)
+    print(f"Rows:    {'identical' if same_index else 'DIFFERENT'} "
+          f"({export.index[0]} .. {export.index[-1]})")
+    problems += not same_index
+
+    common = [c for c in export.columns if c in set(energy.columns)]
+    a = energy[common].reindex(export.index).astype(float)
+    x = export[common].astype(float)
+    blank_mismatch = int((a.isna() != x.isna()).sum().sum())
+    print(f"Empty cells: {int(x.isna().sum().sum())} in the export, "
+          f"{blank_mismatch} that only one side leaves empty")
+    problems += blank_mismatch
+
+    print("\nPer metercode: cells differing by more than rounding, and quarter totals")
+    diff = (a - x).abs() > TOLERANCE
+    for metercode in dict.fromkeys(c[-1] for c in common):
+        cols = [c for c in common if c[-1] == metercode]
+        cells = diff[cols]
+        n = int(cells.sum().sum())
+        meters = int(cells.any(axis=0).sum())
+        line = f"  {n:6d} cells, {meters:2d} meters  {metercode}"
+        if n:
+            days = cells.any(axis=1)
+            day_list = sorted(set(days[days].index.date))
+            line += f"\n         on {len(day_list)} day(s), {day_list[0]} .. {day_list[-1]}"
+        line += (f"\n         total {np.nansum(x[cols].to_numpy()):,.3f} kWh in the export, "
+                 f"{np.nansum(a[cols].to_numpy()):,.3f} kWh from the API")
+        print(line)
+        problems += n
+
+    labels = labels_by_column(export_qov)
+    if labels:
+        api_labels = {}
+        q_cols = list(qov.columns)
+        for i, c in enumerate(q_cols):
+            if c[0] != "QoV" and i + 1 < len(q_cols):
+                api_labels[c] = qov.iloc[:, i + 1]
+        mismatched = l3_export = l3_api = 0
+        for c, lab in labels.items():
+            if c not in api_labels:
+                continue
+            ours = api_labels[c].reindex(lab.index)
+            both = lab.notna() & ours.notna()
+            mismatched += int((lab[both] != ours[both]).sum())
+            l3_export += int((lab == "L3").sum())
+            l3_api += int((api_labels[c] == "L3").sum())
+        print(f"\nQuality labels: {mismatched} differ on the rows the QoV Log lists; "
+              f"L3 cells: {l3_export} in the export, {l3_api} from the API")
+        problems += mismatched
+    else:
+        print("\nQuality labels: the export has no QoV Log sheet to compare with")
+
+    print("\nVERDICT:", "identical" if not problems else
+          f"{problems} difference(s) - if the export is not from today, "
+          "re-download it and compare again before trusting either")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         sys.exit(__doc__)
-    main(os.path.expanduser(sys.argv[1]))
+    main(os.path.expanduser(sys.argv[1]), os.path.expanduser(sys.argv[2]))

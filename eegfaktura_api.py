@@ -8,15 +8,21 @@ No Qt in here, so it can be tested without a display.
 
 What the API gives and what it does not:
   - POST /energystore/query/rawdata with Basic auth returns 15-minute values
-    per metering point, with a quality flag (qov) per value. This is the
-    route the Grafana proxy already uses in production.
+    per metering point, with a quality flag per value. This is the route the
+    Grafana proxy already uses in production.
   - It returns no member names. Those come from the member list export
     ("Mitglieder" sheet), matched on the metering point ID - which also
     tells us which community to ask for (its "Gemeinschafts-ID").
   - Member data and invoices need a Keycloak token whose password grant is
     disabled for the web app's client, so they stay manual for now.
+
+The export rules mirrored here are from eegfaktura-energystore
+(excel/EnergySheet.go, EnergyExport.go addLine, utils.IsLineDateOutOfRange)
+and were checked against a real Q2 2026 export.
 """
 
+import base64
+import datetime as dt
 import re
 
 import pandas as pd
@@ -27,8 +33,8 @@ TIMEOUT = 60
 TIMEZONE = "Europe/Vienna"
 
 # Value slot in the API -> metercode as named in the Energy Report export.
-# Consumption slots 0 and 2 are proven by the Grafana proxy; the rest are
-# checked against a real export by tools/compare_api_with_export.py.
+# The export writes slot i of its stored matrix under exactly these headers,
+# and comparing the API with a real export confirmed it for every column.
 METERCODES = {
     "CONSUMPTION": [
         (0, "Gesamtverbrauch lt. Messung (bei Teilnahme gem. Erzeugung) [KWH]"),
@@ -42,6 +48,10 @@ METERCODES = {
 }
 
 COLUMN_LEVELS = ["MeteringpointID", "Name", "Energy direction", "Metercode"]
+
+# Quality of a value: 0 = L0 no reading delivered, 1 = L1 measured,
+# 2 = L2 substitute value, 3 = L3 faulty. The export leaves L0 cells empty.
+NO_READING = "L0"
 
 
 class EEGFakturaError(Exception):
@@ -99,23 +109,56 @@ def parse_billing_period(year_text, quarter_text):
 
 # --- fetching ---------------------------------------------------------------
 
+def basic_auth_headers(user, password):
+    """Authorization headers to try, most likely to work first.
+
+    The energystore decodes Basic credentials with Go's URL-safe base64 and
+    ignores the decode error (middleware/api_authentication.go). A login whose
+    standard encoding contains "+" or "/" - any non-ASCII character can cause
+    that, and so can "?", ">" or "~" in some positions - is cut short there
+    and refused, although the password is right. So send the URL-safe form
+    the server actually decodes, then the standard one in case that is ever
+    fixed. For most logins the two are identical and only one is sent.
+
+    UTF-8 rather than the latin-1 requests would use: the server hands the
+    bytes to Keycloak as a Go string, which is UTF-8.
+    """
+    token = f"{user}:{password}".encode("utf-8")
+    urlsafe = "Basic " + base64.urlsafe_b64encode(token).decode("ascii")
+    standard = "Basic " + base64.b64encode(token).decode("ascii")
+    return [urlsafe] if urlsafe == standard else [urlsafe, standard]
+
+
 def fetch_rawdata(user, password, tenant, ec_id, start, end, session=None):
     """POST the rawdata query and return the decoded JSON body."""
+    if ":" in password:
+        # The server splits the decoded login on every ":" and keeps only the
+        # first piece of the password, so such a password can never match.
+        raise EEGFakturaError(
+            "Die EEG Faktura Schnittstelle kann Passwörter mit Doppelpunkt (:) nicht "
+            "annehmen. Bitte das Passwort in EEG Faktura ändern oder die Energiedaten "
+            "wie bisher als Excel-Datei laden.")
     http = session or requests
     body = {"ecId": ec_id,
             "start": int(start.timestamp() * 1000),
             "end": int(end.timestamp() * 1000)}
-    try:
-        response = http.post(RAWDATA_URL, json=body, auth=(user, password),
-                             headers={"X-Tenant": tenant,
-                                      "Accept": "application/json"},
-                             timeout=TIMEOUT)
-    except requests.RequestException as e:
-        raise EEGFakturaError(f"Keine Verbindung zu EEG Faktura: {e}") from e
-    if response.status_code == 401:
-        raise EEGFakturaError("EEG Faktura hat Benutzername oder Passwort abgelehnt.")
-    if response.status_code == 403:
-        raise EEGFakturaError(f"Diese Anmeldung hat keinen Zugriff auf {tenant}.")
+    for header in basic_auth_headers(user, password):
+        try:
+            response = http.post(RAWDATA_URL, json=body,
+                                 headers={"Authorization": header,
+                                          "X-Tenant": tenant,
+                                          "Accept": "application/json"},
+                                 timeout=TIMEOUT)
+        except requests.RequestException as e:
+            raise EEGFakturaError(f"Keine Verbindung zu EEG Faktura: {e}") from e
+        if response.status_code != 403:
+            break
+    if response.status_code in (401, 403):
+        # The server answers 403 to every failed login - wrong password,
+        # unknown user, or no access to this community - and says no more.
+        raise EEGFakturaError(
+            f"EEG Faktura hat die Anmeldung für {tenant} abgelehnt: entweder ist das "
+            "Passwort falsch, oder dieses Konto hat keinen Zugriff auf die Gemeinschaft.")
     if not response.ok:
         raise EEGFakturaError(f"EEG Faktura antwortet mit HTTP {response.status_code}.")
     try:
@@ -124,32 +167,65 @@ def fetch_rawdata(user, password, tenant, ec_id, start, end, session=None):
         raise EEGFakturaError("EEG Faktura hat keine lesbaren Daten geliefert.") from e
 
 
-# --- reshaping --------------------------------------------------------------
+# --- who held which meter when ---------------------------------------------
 
-def member_names_by_meter(members):
-    """Metering point ID -> name, spelled the way the Energy Report spells it.
+def _local_midnight(value):
+    """Vienna midnight of a member-list date, or None for blank or open-ended.
 
-    The report writes "Name 1" + " " + "Name 2" verbatim, stray spaces and
-    all (checked against all 37 meters of a real export), and the rest of the
-    app looks names up in that form - so do not tidy it.
+    Active meters carry 2999-12-31 as their deactivation date.
     """
-    names = {}
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    try:
+        day = dt.date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        return None
+    if day.year >= 2200:
+        return None
+    return pd.Timestamp(day).tz_localize(TIMEZONE)
+
+
+def participations_by_meter(members):
+    """Metering point -> [(name, active_from, active_until)], one per row.
+
+    The name is spelled the way the Energy Report spells it: "Name 1" + " " +
+    "Name 2" verbatim, stray spaces and all (checked against all 37 meters of
+    a real export). The rest of the app looks names up in that form.
+
+    A meter that changed hands has one row per holder, and each holder gets
+    their own columns. The period runs from local midnight of "aktiviert" up
+    to, but not including, midnight after "deaktiviert": the export counts
+    the whole deactivation day as active. None means unbounded.
+    """
+    result = {}
     if members is None or "Zählpunkt" not in members:
-        return names
+        return result
     for _, row in members.iterrows():
         meter = row.get("Zählpunkt")
-        if pd.isna(meter):
+        if meter is None or pd.isna(meter):
             continue
         first = "" if pd.isna(row.get("Name 1")) else str(row.get("Name 1"))
         last = "" if pd.isna(row.get("Name 2")) else str(row.get("Name 2"))
-        names.setdefault(str(meter).strip(), f"{first} {last}")
-    return names
+        since = _local_midnight(row.get("aktiviert"))
+        until = _local_midnight(row.get("deaktiviert"))
+        if until is not None:
+            until = until + pd.DateOffset(days=1)
+        result.setdefault(str(meter).strip(), []).append((f"{first} {last}", since, until))
+    return result
 
+
+def member_names_by_meter(members):
+    """Metering point ID -> name of its first listed holder."""
+    return {meter: rows[0][0] for meter, rows in participations_by_meter(members).items()}
+
+
+# --- reshaping --------------------------------------------------------------
 
 def _qov_level(qov, slot):
-    """Normalise one quality flag to the export's "L1"/"L2"/"L3" spelling.
+    """Normalise one quality flag to the export's "L0".."L3" spelling.
 
-    The flag may come as one value for the whole sample or one per slot.
+    The flag comes as one value per slot; a single value for the whole
+    sample is accepted too.
     """
     if isinstance(qov, (list, tuple)):
         qov = qov[slot] if slot < len(qov) else None
@@ -171,18 +247,20 @@ def build_energy_frames(raw, members, start, end):
 
     energy: what load_energy_data reads from the "Energiedaten" sheet -
         a naive local-time index, columns (MeteringpointID, Name,
-        Energy direction, Metercode).
+        Energy direction, Metercode). Cells are empty where the export
+        leaves them empty: no reading delivered (L0), or outside the
+        holder's membership.
     qov: what it reads from "QoV Log" - each value column followed by a
-        column whose first level is "QoV" holding L1/L2/L3. check_energydata
+        column whose first level is "QoV" holding L0..L3. check_energydata
         finds the value column as the one just before each QoV column.
-    unmatched_meters: metering points with data but no row in the member
-        list. They are left out rather than given a made-up name, and the
+    unmatched_meters: metering points with readings that no member-list row
+        covers. They are left out rather than given a made-up name, and the
         caller reports them.
 
     Rows are cut to [start, end): the API returns the whole of the end day,
     which would otherwise put a day of the next quarter into this one.
     """
-    names = member_names_by_meter(members)
+    holders = participations_by_meter(members)
     energy_columns, energy_series = [], []
     qov_columns, qov_series = [], []
     unmatched = []
@@ -192,28 +270,49 @@ def build_energy_frames(raw, members, start, end):
         samples = (entry or {}).get("data") or []
         if direction not in METERCODES or not samples:
             continue
-        if meter not in names:
-            unmatched.append(meter)
-            continue
         index = (pd.to_datetime([s["ts"] for s in samples], unit="ms", utc=True)
                  .tz_convert(TIMEZONE))
-        keep = (index >= start) & (index < end)
-        index = index[keep]
-        kept = [s for s, k in zip(samples, keep) if k]
-        for slot, metercode in METERCODES[direction]:
-            column = (meter, names[meter], direction, metercode)
-            energy_columns.append(column)
-            energy_series.append(pd.Series(
-                [_value(s.get("value"), slot) for s in kept], index=index))
-            qov_columns.append(column)
-            qov_series.append(pd.Series(
-                [_value(s.get("value"), slot) for s in kept], index=index))
-            # Mirrors the export's own blank-headed QoV column; the tuple only
-            # has to be unique and start with "QoV".
-            n = len(qov_columns)
-            qov_columns.append(("QoV",) + tuple(f"Unnamed: {n}_level_{i}" for i in (1, 2, 3)))
-            qov_series.append(pd.Series(
-                [_qov_level(s.get("qov"), slot) for s in kept], index=index, dtype=object))
+        in_quarter = (index >= start) & (index < end)
+        index = index[in_quarter]
+        kept = [s for s, k in zip(samples, in_quarter) if k]
+        if not kept:
+            continue
+
+        slots = METERCODES[direction]
+        levels = {slot: pd.Series([_qov_level(s.get("qov"), slot) for s in kept],
+                                  index=index, dtype=object)
+                  for slot, _ in slots}
+        values = {slot: pd.Series([_value(s.get("value"), slot) for s in kept],
+                                  index=index, dtype=float)
+                  for slot, _ in slots}
+        has_reading = pd.concat([levels[slot] != NO_READING for slot, _ in slots],
+                                axis=1).any(axis=1)
+
+        covered = pd.Series(False, index=index)
+        for name, since, until in holders.get(meter, []):
+            active = pd.Series(True, index=index)
+            if since is not None:
+                active &= index >= since
+            if until is not None:
+                active &= index < until
+            if not active.any():
+                continue                    # held by this person in another quarter
+            covered |= active
+            for slot, metercode in slots:
+                column = (meter, name, direction, metercode)
+                shown = values[slot].where(active & (levels[slot] != NO_READING))
+                energy_columns.append(column)
+                energy_series.append(shown)
+                qov_columns.append(column)
+                qov_series.append(shown)
+                # Mirrors the export's own blank-headed QoV column; the tuple
+                # only has to be unique and start with "QoV".
+                n = len(qov_columns)
+                qov_columns.append(("QoV",) + tuple(f"Unnamed: {n}_level_{i}" for i in (1, 2, 3)))
+                qov_series.append(levels[slot].where(active))
+
+        if (has_reading & ~covered).any():
+            unmatched.append(meter)
 
     energy = _frame(energy_series, energy_columns)
     qov = _frame(qov_series, qov_columns)
