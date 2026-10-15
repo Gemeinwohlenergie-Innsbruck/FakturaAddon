@@ -42,6 +42,17 @@ def _default_env_path():
 
 ENV_PATH = _default_env_path()
 
+
+def user_data_dir():
+    """Where records that must outlive upgrades and checkouts are kept.
+
+    Always the per-user location, even from a source checkout: the record
+    of what was collected must not depend on which copy of the app ran.
+    """
+    directory = _user_config_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
 # internal field name -> .env key
 ENV_KEYS = {
     "user":                    "EEG_USER",

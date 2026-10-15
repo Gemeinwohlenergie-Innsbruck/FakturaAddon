@@ -137,6 +137,38 @@ breaks some passwords containing `?`, `>`, `~` or non-ASCII characters. The
 app retries those correctly. Passwords containing `:` cannot work with the
 API at all, and the app says so.
 
+## Checking before anyone is charged
+
+**Abrechnung prüfen und freigeben** is a required step. Until it is done,
+and again whenever any file is reloaded, the app will not create invoices,
+send mail or export SEPA files. It shows every document next to what was
+checked against it, and every document has to be ticked before approval.
+Approving despite errors needs a written reason. The approval and the
+review record (an Excel file you can save) say who approved which data and
+when.
+
+What is checked, beyond missing IBANs, mandates and mail addresses:
+
+- **Every euro re-derives.** Each position is recomputed the way
+  EEG Faktura's billing computes it (kWh × price in cent, discount, VAT,
+  each rounded half-up to the cent). Each document's total must equal the
+  sum of its positions: the screen shows the total, but the SEPA file moves
+  the sum.
+- **Billed kWh match the energy data, per metering point.** Consumers are
+  billed their *Eigendeckung*, producers *Gesamte Erzeugung − Überschuss*.
+  A difference usually means the grid operator corrected the data after the
+  billing run, so re-run the billing in EEG Faktura.
+- **The billed quarter-hours were measured.** L3 (faulty) and L0 (no
+  reading) in a billed meter's data are errors; L2 (substitute values) is
+  noted.
+- **Invoices, member list and energy data belong to one community.** This
+  matters with two communities on one computer.
+- **Bank details are still current.** An IBAN changed since the billing run
+  would be debited or paid on the old account.
+- **Nothing is collected twice.** Each SEPA export and mail run is recorded
+  in `ledger.jsonl` next to the settings. Exporting a document again needs
+  an explicit confirmation.
+
 ## Run
 
 ```

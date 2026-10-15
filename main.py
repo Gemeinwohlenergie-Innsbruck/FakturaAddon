@@ -16,8 +16,10 @@ import sys
 from PyQt5.QtWidgets import QLabel, QFileDialog, QMessageBox, QGridLayout, QTableWidget, QTableWidgetItem, QListWidget, QWidget, QListWidgetItem, QCheckBox, QListWidgetItem, QPushButton, QVBoxLayout, QDialog
 from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog, FetchEnergyDialog, run_in_background
 import eegfaktura_api
+import ledger
+import review
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
-from selection import select_invoice_positions, members_with_invoices
+from selection import select_invoice_positions, members_with_invoices, documents_of_member
 from config import ENV_PATH, load_env
 import config as config_module
 import validation
@@ -285,6 +287,238 @@ class ValidationDialog(QDialog):
         QtWidgets.QApplication.clipboard().setText(self.report_text())
 
 
+class AcceptErrorsDialog(QDialog):
+    """Approving despite errors needs a reason, and the reason is recorded."""
+
+    def __init__(self, errors, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Freigabe trotz Fehlern"))
+        self.resize(620, 420)
+        layout = QVBoxLayout(self)
+        intro = QLabel(tr("Die Prüfung meldet {n} Fehler. Eine Freigabe trotz Fehlern wird mit "
+                          "Begründung im Prüfprotokoll festgehalten.", n=len(errors)))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        listing = QListWidget()
+        for finding in errors:
+            listing.addItem(f"{finding.category}: {finding.message}")
+        listing.setWordWrap(True)
+        layout.addWidget(listing, 1)
+        self.reason = QtWidgets.QLineEdit()
+        self.reason.setPlaceholderText(tr("Begründung, z. B. »Netzbetreiber hat Werte bestätigt«"))
+        layout.addWidget(self.reason)
+        self.confirm = QCheckBox(tr("Ich habe die Fehler geprüft und gebe die Abrechnung trotzdem frei."))
+        layout.addWidget(self.confirm)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                             | QtWidgets.QDialogButtonBox.Cancel)
+        self.ok = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        self.ok.setText(tr("Trotzdem freigeben"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.reason.textChanged.connect(self.update_ok)
+        self.confirm.toggled.connect(self.update_ok)
+        self.update_ok()
+
+    def update_ok(self):
+        self.ok.setEnabled(self.confirm.isChecked() and bool(self.reason.text().strip()))
+
+
+class ReviewDialog(QDialog):
+    """Every document with what was checked against it, before anything is charged.
+
+    The automatic checks find what can be found mechanically; this is where a
+    person looks at each document and ticks it. Approval needs every row
+    ticked, errors can only be approved with a recorded reason, and the
+    approval covers exactly the data shown - reloading any file voids it.
+    """
+
+    COLUMNS = [("", None), ("Status", "Status"), ("Typ", "Typ"), ("Nr.", "Nummer"),
+               ("Name", "Name"), ("Betrag", "Betrag"), ("kWh abgerechnet", "kWh abgerechnet"),
+               ("kWh lt. Energiedaten", "kWh Energiedaten"), ("Abweichung", "Abweichung kWh"),
+               ("Datenqualität", "Qualität"), ("IBAN", "IBAN"), ("Mandat", "Mandat"),
+               ("Mail", "Mail"), ("Hinweise", "Hinweise")]
+
+    def __init__(self, table, summary_rows, findings, fingerprint, period_label="",
+                 home_directory="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Abrechnung prüfen und freigeben"))
+        self.resize(1200, 700)
+        self.table, self.summary_rows, self.findings = table, summary_rows, findings
+        self.fingerprint, self.period_label = fingerprint, period_label
+        self.home_directory = home_directory
+        self.approval = None
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(tr("Bitte jedes Dokument ansehen und abhaken. Freigegeben wird genau dieser "
+                          "Datenstand - wird danach eine Datei neu geladen, ist eine neue Prüfung "
+                          "nötig."))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        facts = QGridLayout()
+        for i, (label, value) in enumerate(summary_rows):
+            caption = QLabel(label)
+            caption.setStyleSheet(f"color: {theme.MUTED};")
+            shown = QLabel(str(value))
+            shown.setStyleSheet("font-weight: 600;")
+            shown.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            facts.addWidget(caption, i // 2, (i % 2) * 2)
+            facts.addWidget(shown, i // 2, (i % 2) * 2 + 1)
+        facts.setColumnStretch(1, 1)
+        facts.setColumnStretch(3, 1)
+        layout.addLayout(facts)
+
+        bar = QtWidgets.QHBoxLayout()
+        self.only_issues = QCheckBox(tr("Nur Dokumente mit Hinweisen zeigen"))
+        self.only_issues.toggled.connect(self.apply_filter)
+        bar.addWidget(self.only_issues)
+        bar.addStretch(1)
+        all_findings = QPushButton(tr("Alle Befunde…"))
+        all_findings.clicked.connect(lambda: ValidationDialog(self.findings, parent=self).exec_())
+        bar.addWidget(all_findings)
+        layout.addLayout(bar)
+
+        self.grid = QTableWidget(len(table), len(self.COLUMNS))
+        self.grid.setHorizontalHeaderLabels([tr(label) if label else "✓" for label, _ in self.COLUMNS])
+        self.grid.verticalHeader().setVisible(False)
+        self.grid.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.grid.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        right = Qt.AlignRight | Qt.AlignVCenter
+        for row, (_, record) in enumerate(table.iterrows()):
+            tick = QTableWidgetItem()
+            tick.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            tick.setCheckState(Qt.Unchecked)
+            self.grid.setItem(row, 0, tick)
+            for col, (_, key) in enumerate(self.COLUMNS[1:], start=1):
+                item = QTableWidgetItem(self.display(key, record[key]))
+                if key in ("Betrag", "kWh abgerechnet", "kWh Energiedaten", "Abweichung kWh"):
+                    item.setTextAlignment(right)
+                if key == "Status":
+                    item.setForeground(QBrush(QColor(self.status_colour(record[key]))))
+                if key == "Hinweise" and record[key]:
+                    item.setToolTip("\n".join(record[key]))
+                if key == "Abweichung kWh" and record[key] is not None \
+                        and abs(record[key]) > validation.KWH_TOLERANCE:
+                    item.setForeground(QBrush(QColor(theme.ERROR)))
+                self.grid.setItem(row, col, item)
+        self.grid.resizeColumnsToContents()
+        # The findings column gets a readable width and takes any space
+        # left; sized to its content it pushed the table sideways, and
+        # stretched it could shrink to a few letters. The full text is in
+        # the panel below and in the tooltip.
+        self.grid.setColumnWidth(len(self.COLUMNS) - 1, 260)
+        self.grid.horizontalHeader().setStretchLastSection(True)
+        self.grid.itemChanged.connect(self.update_progress)
+        self.grid.currentCellChanged.connect(lambda row, *_: self.show_details(row))
+        layout.addWidget(self.grid, 1)
+
+        self.details = QLabel(tr("Eine Zeile auswählen, um alle Hinweise zum Dokument zu sehen."))
+        self.details.setWordWrap(True)
+        self.details.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.details.setStyleSheet(f"color: {theme.MUTED}; padding: 4px 2px;")
+        layout.addWidget(self.details)
+
+        bottom = QtWidgets.QHBoxLayout()
+        self.progress = QLabel()
+        bottom.addWidget(self.progress)
+        bottom.addStretch(1)
+        tick_clean = QPushButton(tr("Unauffällige abhaken"))
+        tick_clean.setToolTip(tr("Hakt alle Dokumente ohne Fehler und Warnungen ab."))
+        tick_clean.clicked.connect(self.tick_clean)
+        bottom.addWidget(tick_clean)
+        save = QPushButton(tr("Prüfprotokoll speichern…"))
+        save.clicked.connect(lambda: self.save_protocol())
+        bottom.addWidget(save)
+        cancel = QPushButton(tr("Abbrechen"))
+        cancel.clicked.connect(self.reject)
+        bottom.addWidget(cancel)
+        self.approve_button = QPushButton(tr("Freigeben"))
+        self.approve_button.setObjectName("primaryButton")
+        self.approve_button.clicked.connect(self.approve)
+        bottom.addWidget(self.approve_button)
+        layout.addLayout(bottom)
+        self.update_progress()
+
+    @staticmethod
+    def display(key, value):
+        if key == "Status":
+            return {validation.ERROR: tr("Fehler"), validation.WARNING: tr("Warnung"),
+                    validation.INFO: tr("Hinweis")}.get(value, tr("ok"))
+        if key == "Hinweise":
+            return " · ".join(value) if value else ""
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return "–"
+        if key == "Betrag":
+            return validation.format_euro(value)
+        if key == "Abweichung kWh":
+            return ("+" if value > 0 else "") + validation.format_kwh(value)
+        if key in ("kWh abgerechnet", "kWh Energiedaten"):
+            return validation.format_kwh(value)
+        return str(value)
+
+    @staticmethod
+    def status_colour(status):
+        if status == review.OK:
+            return theme.OK
+        return ValidationDialog.severity_colour(status)
+
+    def show_details(self, row):
+        if row < 0 or row >= len(self.table):
+            return
+        record = self.table.iloc[row]
+        lines = record["Hinweise"] or [tr("Keine Hinweise.")]
+        self.details.setText(f"{record['Nummer']} · {record['Name']}:\n" + "\n".join(f"• {l}" for l in lines))
+
+    def ticked(self):
+        return [self.grid.item(r, 0).checkState() == Qt.Checked for r in range(self.grid.rowCount())]
+
+    def update_progress(self, *_):
+        ticks = self.ticked()
+        self.progress.setText(tr("{done} von {total} Dokumenten abgehakt",
+                                 done=sum(ticks), total=len(ticks)))
+        self.approve_button.setEnabled(bool(ticks) and all(ticks))
+
+    def apply_filter(self, only_issues):
+        for row, status in enumerate(self.table["Status"]):
+            self.grid.setRowHidden(row, only_issues and status == review.OK)
+
+    def tick_clean(self):
+        for row, status in enumerate(self.table["Status"]):
+            if status in (review.OK, validation.INFO):
+                self.grid.item(row, 0).setCheckState(Qt.Checked)
+
+    def approve(self):
+        errors = [f for f in self.findings if f.severity == validation.ERROR]
+        reason = ""
+        if errors:
+            dialog = AcceptErrorsDialog(errors, parent=self)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            reason = dialog.reason.text().strip()
+        self.approval = review.approval_record(self.fingerprint, self.table, self.findings,
+                                               reason=reason, by=ledger.current_user())
+        self.save_protocol(after_approval=True)
+        self.accept()
+
+    def save_protocol(self, after_approval=False):
+        default = os.path.join(self.home_directory or os.path.expanduser("~"),
+                               f"Pruefprotokoll_{self.period_label or 'Abrechnung'}.xlsx")
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("Prüfprotokoll speichern") if not after_approval
+            else tr("Freigegeben - Prüfprotokoll speichern?"), default, "Excel (*.xlsx)")
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        try:
+            review.write_protocol(path, self.table, self.summary_rows, self.findings, self.approval)
+        except Exception as e:
+            QMessageBox.critical(self, tr("Speichern fehlgeschlagen"),
+                                 tr("{what} konnten nicht gespeichert werden:\n{path}\n\n{error}",
+                                    what=tr("Prüfprotokoll"), path=path, error=e))
+
+
 class WorkflowPanel(QtWidgets.QWidget):
     """The quarterly sequence, as an actual sequence.
 
@@ -395,6 +629,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.thisinvoices_year = ""
         self.thisinvoice_quart = ""
         self.safepath_this_invoices = ""
+        self.approval = None
+        self.data_fingerprint = ""
+        self.energy_source = ""
         self.init_data()
         self.init_Ui()
 
@@ -562,6 +799,7 @@ class MainWindow(QtWidgets.QMainWindow):
     WORKFLOW_STEPS = [
         ("validate",        "Daten prüfen",              False),
         ("check_energy",    "Energiequalität prüfen",    True),
+        ("review",          "Abrechnung prüfen und freigeben", False),
         ("create_invoices", "Rechnungen erstellen",      False),
         ("send_mail",       "Rechnungen verschicken",    False),
         ("sepa_export",     "SEPA-Export für Infinity",  False),
@@ -575,9 +813,16 @@ class MainWindow(QtWidgets.QMainWindow):
         has_qov = self.energydata.metadata is not None
         has_invoice_template = self.invoices.template is not None
         has_mail_template = self.emails.template is not None
+        # Nothing that charges, credits or tells a member what they owe runs
+        # on data nobody has reviewed, or on data reloaded since.
+        approved = self.approval_is_valid()
         return {
             "validate": [] if has_invoices else [tr("Rechnungsdaten")],
             "check_energy": [] if has_qov else [tr("Quartalsenergiedaten QoV")],
+            "review": [label for label, ok in [
+                (tr("Rechnungsdaten"), has_invoices),
+                (tr("Stammdaten"), has_master),
+                (tr("Energiedaten"), has_energy)] if not ok],
             # Energiedaten belongs here: produce_invoices_and_save dereferences
             # it unconditionally, so starting without it used to blow up inside
             # the worker rather than being refused up front.
@@ -585,13 +830,44 @@ class MainWindow(QtWidgets.QMainWindow):
                 (tr("Rechnungsdaten"), has_invoices),
                 (tr("Stammdaten"), has_master),
                 (tr("Energiedaten"), has_energy),
-                (tr("Rechnungsvorlage"), has_invoice_template)] if not ok],
+                (tr("Rechnungsvorlage"), has_invoice_template),
+                (tr("Freigabe"), approved)] if not ok],
             "send_mail": [label for label, ok in [
                 (tr("Rechnungsdaten"), has_invoices),
                 (tr("Stammdaten"), has_master),
-                (tr("Emailvorlage"), has_mail_template)] if not ok],
-            "sepa_export": [] if has_invoices else [tr("Rechnungsdaten")],
+                (tr("Emailvorlage"), has_mail_template),
+                (tr("Freigabe"), approved)] if not ok],
+            "sepa_export": [label for label, ok in [
+                (tr("Rechnungsdaten"), has_invoices),
+                (tr("Freigabe"), approved)] if not ok],
         }
+
+    def approval_is_valid(self):
+        return (self.approval is not None
+                and self.approval["fingerprint"] == self.data_fingerprint)
+
+    def creditor_key(self):
+        """The community's own IBAN from the loaded invoices - scopes the ledger."""
+        data = self.invoices.data
+        if not data or "Ersteller IBAN" not in data["list"]:
+            return ""
+        values = data["list"]["Ersteller IBAN"].dropna()
+        return validation.normalise_iban(values.iloc[0]) if len(values) else ""
+
+    def billing_label(self):
+        data = self.invoices.data
+        if not data or "Abrechnung" not in data["list"] or data["list"].empty:
+            return ""
+        return str(data["list"]["Abrechnung"].iloc[0])
+
+    def collect_findings(self):
+        creditor = self.creditor_key()
+        return validation.validate(
+            invoices=self.invoices, masterdata=self.masterdata, energydata=self.energydata,
+            resolve_name=resolve_name_in_energydata,
+            members_with_invoices=members_with_invoices,
+            exported=ledger.last_done(ledger.SEPA, creditor) if creditor else None,
+            mailed=ledger.last_done(ledger.MAIL, creditor) if creditor else None)
 
     def mark_step_done(self, key):
         self.completed_steps.add(key)
@@ -723,6 +999,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if loaded is not None:
                 self.reload_table_view("0_1", loaded)
                 panel.set_path(key, filepath)
+                if not load_qov:
+                    self.energy_source = os.path.basename(filepath)
                 self.on_data_changed()
 
         def import_energy_data(load_qov=False):
@@ -774,6 +1052,8 @@ class MainWindow(QtWidgets.QMainWindow):
             source = f"EEG Faktura · {tenant} · {v['year']} Q{v['quarter']}"
             panel.set_path("energy", source)
             panel.set_path("energy_qov", source)
+            self.energy_source = tr("{source}, abgerufen {when}", source=source,
+                                    when=datetime.datetime.now().strftime("%d.%m.%Y %H:%M"))
             self.on_data_changed()
             if unmatched:
                 box = QMessageBox(self)
@@ -824,6 +1104,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_data_changed(self):
         """A file was loaded: re-evaluate the header and which steps are possible."""
+        # Hashed here rather than on every refresh: the energy data is large.
+        # Any change voids an earlier approval, because it no longer matches.
+        self.data_fingerprint = review.fingerprint(self.invoices, self.masterdata, self.energydata)
+        if self.approval is not None and not self.approval_is_valid():
+            self.completed_steps.discard("review")
         self.update_status_header()
         self.refresh_workflow()
 
@@ -977,6 +1262,24 @@ class MainWindow(QtWidgets.QMainWindow):
                             QMessageBox.warning(self, tr("Keine Auswahl"),
                                                 tr("Es ist niemand ausgewählt - es wird nichts exportiert."))
                             return
+                        creditor = self.creditor_key()
+                        already = ledger.last_done(ledger.SEPA, creditor) if creditor else {}
+                        repeated = sorted({validation.document_key(n)
+                                           for n in invoices_selected_names.get("Nummer", [])}
+                                          & set(already))
+                        if repeated:
+                            box = QMessageBox(self)
+                            box.setIcon(QMessageBox.Warning)
+                            box.setWindowTitle(tr("Schon exportiert"))
+                            box.setText(tr("{n} der ausgewählten Dokumente wurden schon in einen "
+                                           "SEPA-Export übernommen. Ein weiterer Export bucht sie "
+                                           "ein zweites Mal.", n=len(repeated)))
+                            box.setInformativeText(tr("Trotzdem erneut exportieren?"))
+                            box.setDetailedText("\n".join(f"{n}: {already[n]}" for n in repeated))
+                            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                            box.setDefaultButton(QMessageBox.No)
+                            if box.exec_() != QMessageBox.Yes:
+                                return
                         print(tr("{n} von {total} Empfänger:innen ausgewählt", n=len(selected_names), total=len(selected_mask)))
 
                         exportingdebit,exportingtransfer,doublesprocess = produce_sepa_export_dfs(invoices_selected_names,self.config.get("EEG_name",""))
@@ -1018,6 +1321,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             if not save_csv(exportingdebit, filepath1, tr("Lastschriften")):
                                 return
 
+                        filepath2 = None
                         if exportingtransfer is not None:
                             homedir2 = os.path.dirname(filepath1) if filepath1 else self.home_directory
                             filepath2 = load_filepath(self,tr("Wähle Speicherort für Export für Überweisungen aus"),
@@ -1027,6 +1331,27 @@ class MainWindow(QtWidgets.QMainWindow):
                             if filepath2 is not None:
                                 if not save_csv(exportingtransfer, filepath2, tr("Überweisungen")):
                                     return
+
+                        # Record what actually went into a saved file, by person:
+                        # netting can settle a credit inside a debit line.
+                        exported_names = set()
+                        if exportingdebit is not None and filepath1:
+                            exported_names |= set(exportingdebit["Zahlungspflichtiger Name"])
+                        if exportingtransfer is not None and filepath2:
+                            exported_names |= set(exportingtransfer["Empfänger Name"])
+                        done = invoices_selected_names[
+                            invoices_selected_names["Empfänger Name"].isin(exported_names)]
+                        if "Nummer" in done and not done.empty:
+                            amounts = done.groupby(done["Nummer"].map(validation.document_key))[
+                                "Pos. Bruttobetrag"].sum()
+                            try:
+                                ledger.record(ledger.SEPA, creditor, self.billing_label(),
+                                              amounts.to_dict(),
+                                              files=[f for f in (filepath1, filepath2) if f])
+                            except OSError as e:
+                                QMessageBox.warning(self, tr("Nicht vermerkt"),
+                                                    tr("Der Export wurde gespeichert, konnte aber nicht "
+                                                       "vermerkt werden:\n{error}", error=e))
 
                         self.exportwindow.close()
                         self.exportwindow = None   # otherwise the menu entry needs two clicks next time
@@ -1224,10 +1549,37 @@ class MainWindow(QtWidgets.QMainWindow):
                 print(creds)
                 # creds["user"], creds["login"], creds["tenant"], creds["password"]
         def collect_findings():
-            return validation.validate(
+            return self.collect_findings()
+
+        def open_review():
+            check, datamissing = check_whether_data_exists(
                 invoices=self.invoices, masterdata=self.masterdata, energydata=self.energydata,
-                resolve_name=resolve_name_in_energydata,
-                members_with_invoices=members_with_invoices)
+                invoicedatarequired=True, masterdatarequired=True)
+            if not check or self.energydata.data is None:
+                QMessageBox.information(self, tr("Abrechnung prüfen und freigeben"),
+                                        tr("Für die Prüfung werden Rechnungsdaten, Stammdaten und "
+                                           "Energiedaten gebraucht."))
+                return
+            findings = self.collect_findings()
+            table = review.review_table(self.invoices, self.masterdata, self.energydata, findings)
+            rows = review.summary(self.invoices, self.masterdata, self.energydata, findings, table,
+                                  self.energy_source)
+            fingerprint = review.fingerprint(self.invoices, self.masterdata, self.energydata)
+            dialog = ReviewDialog(table, rows, findings, fingerprint,
+                                  period_label=self.billing_label(),
+                                  home_directory=self.home_directory, parent=self)
+            if dialog.exec_() != QDialog.Accepted or dialog.approval is None:
+                return
+            self.approval = dialog.approval
+            self.data_fingerprint = fingerprint
+            try:
+                ledger.record(ledger.APPROVAL, self.creditor_key(), self.billing_label(),
+                              self.approval["documents"], reason=self.approval["reason"],
+                              accepted_errors=self.approval["accepted_errors"],
+                              fingerprint=fingerprint)
+            except OSError as e:
+                print(f"Could not record the approval: {e}")
+            self.mark_step_done("review")
 
         def run_validation():
             findings = collect_findings()
@@ -1243,6 +1595,9 @@ class MainWindow(QtWidgets.QMainWindow):
             tells you: energy data from the wrong quarter, and debits with no
             usable IBAN or mandate.
             """
+            if self.approval_is_valid():
+                # Errors were seen and accepted, with a reason, in the review.
+                return True
             errors = [f for f in collect_findings() if f.severity == validation.ERROR]
             if not errors:
                 return True
@@ -1572,6 +1927,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         smtp_port = 587
 
                     sent, failed = [], []
+                    delivered = {}
                     for person_data, fpinvoicefile in jobs:
                         print(f"Send Mail to: {person_data['E-Mail']}")
                         try:
@@ -1583,12 +1939,22 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self.emails.template, fpinvoicefile, self.masterdata,
                                 port=smtp_port)
                             sent.append(person_data["E-Mail"])
+                            for number in documents_of_member(self.invoices.data["list"],
+                                                              person_data["Name 1"],
+                                                              person_data["Name 2"]):
+                                delivered[number] = None
                         except Exception as e:
                             # One bad address must not abort a run that has
                             # already delivered to everybody before it.
                             traceback.print_exc()
                             failed.append(f"{person_data['E-Mail']}: {e}")
 
+                    if delivered and self.creditor_key():
+                        try:
+                            ledger.record(ledger.MAIL, self.creditor_key(), self.billing_label(),
+                                          delivered)
+                        except OSError as e:
+                            print(f"Could not record the mail run: {e}")
                     self.report_send_result(sent, failed, missing)
                     self.mark_step_done("send_mail")
 
@@ -1620,6 +1986,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # ["Login in EEG Faktura", "", login_eeg_faktura],
         menubardata = [[tr("Daten prüfen"), "", run_validation, "validate"],
                        [tr("Überprüfe die Qualität der Energiedaten"), "", check_energydata, "check_energy"],
+                       [tr("Abrechnung prüfen und freigeben"), "", open_review, "review"],
                        [tr("Erstelle alle Rechnungen"), "", create_invoices_and_save, "create_invoices"],
                        [tr("Verschicke die Rechnungen per Mail"), "", send_invoices_mail, "send_mail"],
                        ]

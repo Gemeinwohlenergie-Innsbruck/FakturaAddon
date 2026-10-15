@@ -348,4 +348,206 @@ EN = {
         "Their data was left out.",
     "Meist sind das neue Mitglieder: aktuelle Stammdaten aus EEG Faktura laden und erneut abrufen.":
         "Usually these are new members: load current member data from EEG Faktura and fetch again.",
+
+    # --- billing review and reconciliation --------------------------------
+    'Abrechnung prüfen und freigeben':
+        'Review and approve billing',
+    'Freigabe':
+        'Approval',
+    'Alle Befunde…':
+        'All findings…',
+    'Begründung, z. B. »Netzbetreiber hat Werte bestätigt«':
+        'Reason, e.g. “grid operator confirmed the values”',
+    'Bitte jedes Dokument ansehen und abhaken. Freigegeben wird genau dieser Datenstand - wird danach eine Datei neu geladen, ist eine neue Prüfung nötig.':
+        'Please look at every document and tick it. Approval covers exactly this data - reloading any file afterwards needs a new review.',
+    'Der Export wurde gespeichert, konnte aber nicht vermerkt werden:\n{error}':
+        'The export was saved but could not be recorded:\n{error}',
+    'Die Prüfung meldet {n} Fehler. Eine Freigabe trotz Fehlern wird mit Begründung im Prüfprotokoll festgehalten.':
+        'The review reports {n} error(s). Approving despite errors is recorded in the review record, with your reason.',
+    'Freigabe trotz Fehlern':
+        'Approve despite errors',
+    'Freigeben':
+        'Approve',
+    'Freigegeben - Prüfprotokoll speichern?':
+        'Approved - save the review record?',
+    'Für die Prüfung werden Rechnungsdaten, Stammdaten und Energiedaten gebraucht.':
+        'The review needs invoice data, member data and energy data.',
+    'Hakt alle Dokumente ohne Fehler und Warnungen ab.':
+        'Ticks every document without errors or warnings.',
+    'Ich habe die Fehler geprüft und gebe die Abrechnung trotzdem frei.':
+        'I have checked the errors and approve the billing anyway.',
+    'Nicht vermerkt':
+        'Not recorded',
+    'Nur Dokumente mit Hinweisen zeigen':
+        'Show only documents with findings',
+    'Prüfprotokoll speichern':
+        'Save review record',
+    'Prüfprotokoll speichern…':
+        'Save review record…',
+    'Prüfprotokoll':
+        'Review record',
+    'Schon exportiert':
+        'Already exported',
+    'Trotzdem erneut exportieren?':
+        'Export again anyway?',
+    'Trotzdem freigeben':
+        'Approve anyway',
+    'Unauffällige abhaken':
+        'Tick unremarkable ones',
+    'ok':
+        'ok',
+    '{done} von {total} Dokumenten abgehakt':
+        '{done} of {total} documents ticked',
+    '{n} der ausgewählten Dokumente wurden schon in einen SEPA-Export übernommen. Ein weiterer Export bucht sie ein zweites Mal.':
+        '{n} of the selected documents were already in a SEPA export. Exporting again collects or pays them a second time.',
+    '{source}, abgerufen {when}':
+        '{source}, fetched {when}',
+    'Abrechnung':
+        'Billing period',
+    'Befunde':
+        'Findings',
+    'Begründung':
+        'Reason',
+    'Betroffen':
+        'Affected',
+    'Dokumente':
+        'Documents',
+    'Freigegeben am':
+        'Approved at',
+    'Freigegeben von':
+        'Approved by',
+    'Gemeinschaft':
+        'Community',
+    'Gutschriften (Überweisung)':
+        'Credit notes (transfer)',
+    'Prüfsumme der Daten':
+        'Data checksum',
+    'Rechnungen (Lastschrift)':
+        'Invoices (direct debit)',
+    'Schwere':
+        'Severity',
+    'fehlt':
+        'missing',
+    'kWh-Abgleich':
+        'kWh reconciliation',
+    'nicht geprüft':
+        'not checked',
+    '{errors} Fehler, {warnings} Warnung(en)':
+        '{errors} error(s), {warnings} warning(s)',
+    '{n} Dokument(e) geprüft, {bad} mit Abweichung':
+        '{n} document(s) checked, {bad} differing',
+    '{n} · {total}':
+        '{n} · {total}',
+    'Abgleich kWh':
+        'kWh reconciliation',
+    'Bankverbindung':
+        'Bank details',
+    'Bei {n} Dokument(en) ergeben die Positionen nicht den Dokumentbetrag. Angezeigt wird der Dokumentbetrag, bewegt würde die Summe der Positionen.':
+        'For {n} document(s) the positions do not add up to the document total. The total is what is shown; the sum of positions is what would be moved.',
+    'Bei {n} Position(en) weichen die abgerechneten kWh von den Energiedaten ab (zusammen {kwh}, rund {eur}). Meist wurden die Daten nach dem Abrechnungslauf korrigiert: Abrechnung in EEG Faktura neu erstellen, oder prüfen, ob die richtigen Energiedaten geladen sind.':
+        'For {n} position(s) the billed kWh differ from the energy data (together {kwh}, about {eur}). Usually the data was corrected after the billing run: re-run the billing in EEG Faktura, or check the right energy data is loaded.',
+    'Das Konto der Gemeinschaft hat eine ungültige IBAN.':
+        "The community's own account has an invalid IBAN.",
+    'Datenqualität':
+        'Data quality',
+    'Die Creditor-ID der Gemeinschaft fehlt - ohne sie nimmt die Bank keine Lastschrift an.':
+        "The community's creditor ID is missing - the bank accepts no direct debit without it.",
+    'Die Rechnungsdaten enthalten mehrere Abrechnungszeiträume.':
+        'The invoice data contains more than one billing period.',
+    'Die Rechnungsdaten gehören zu einer anderen Gemeinschaft als die geladenen Stammdaten (anderes Gemeinschaftskonto).':
+        'The invoice data belongs to a different community than the loaded member data (different community account).',
+    'Die Rechnungsdaten stammen von mehr als einem Konto der Gemeinschaft.':
+        'The invoice data comes from more than one community account.',
+    'Die meisten Zählpunkte der Energiedaten stehen nicht in den Stammdaten - die Energiedaten gehören vermutlich zu einer anderen Gemeinschaft.':
+        'Most metering points in the energy data are not in the member data - the energy data probably belongs to another community.',
+    'Frühere Läufe':
+        'Earlier runs',
+    'IBAN seit der Abrechnung geändert':
+        'IBAN changed since billing',
+    'Keine QoV-Daten geladen - ob die abgerechneten Werte gemessen, ersetzt oder fehlerhaft sind, wurde nicht geprüft.':
+        'No QoV data loaded - whether the billed values are measured, substituted or faulty was not checked.',
+    'Mandat erst ab {date}':
+        'mandate only from {date}',
+    'Mandat seit der Abrechnung geändert':
+        'mandate changed since billing',
+    'Nummer doppelt':
+        'duplicate number',
+    'SEPA-Export am {date}':
+        'SEPA export on {date}',
+    'Summe der Positionen {sum} ≠ Dokument {stated}':
+        'positions total {sum} ≠ document {stated}',
+    'USt {stated} statt {expected}':
+        'VAT {stated} instead of {expected}',
+    'brutto {stated} statt {expected}':
+        'gross {stated} instead of {expected}',
+    'keine Positionen':
+        'no positions',
+    'negativer Betrag':
+        'negative amount',
+    'netto {stated} statt {expected}':
+        'net {stated} instead of {expected}',
+    'unbekannter Typ':
+        'unknown type',
+    'verschickt am {date}':
+        'mailed on {date}',
+    '{meter}: keine Energiedaten':
+        '{meter}: no energy data',
+    '{meter}: {count}× {level}':
+        '{meter}: {count}× {level}',
+    '{meter}: {diff} gegenüber Energiedaten':
+        '{meter}: {diff} against the energy data',
+    '{name}, {meter}: abgerechnet {billed}, Energiedaten {expected} ({diff}, rund {eur})':
+        '{name}, {meter}: billed {billed}, energy data {expected} ({diff}, about {eur})',
+    '{name}, {meter}: {count} Viertelstunde(n) {level}':
+        '{name}, {meter}: {count} quarter-hour(s) {level}',
+    '{name}, {meter}: {kwh}':
+        '{name}, {meter}: {kwh}',
+    '{name}: Abrechnung …{then}, Stammdaten …{now}':
+        '{name}: billing …{then}, member data …{now}',
+    '{name}: {then} → {now}':
+        '{name}: {then} → {now}',
+    '{number} ({name}): {column} {stated}, Positionen ergeben {sum}':
+        '{number} ({name}): {column} {stated}, positions add up to {sum}',
+    '{n} Dokument(e) mit negativem Betrag.':
+        '{n} document(s) with a negative amount.',
+    '{n} Dokument(e) mit unbekanntem Typ - der SEPA-Export würde sie übergehen.':
+        '{n} document(s) of unknown type - the SEPA export would skip them.',
+    '{n} Dokument(e) ohne Positionen in den Details.':
+        '{n} document(s) without positions in the details.',
+    '{n} Dokument(e) wurden schon in einen SEPA-Export übernommen. Ein weiterer Export bucht sie ein zweites Mal.':
+        '{n} document(s) were already in a SEPA export. Another export collects or pays them a second time.',
+    '{n} Dokument(e) wurden schon per Mail verschickt.':
+        '{n} document(s) have already been mailed.',
+    '{n} Dokumentnummer(n) kommen mehrfach vor.':
+        '{n} document number(s) occur more than once.',
+    '{n} Dokumentnummer(n) nur in den Details, nicht in der Liste.':
+        '{n} document number(s) only in the details, not in the list.',
+    '{n} Informations-Dokument(e) werden im SEPA-Export wie Gutschriften überwiesen.':
+        '{n} information document(s) are paid out like credit notes in the SEPA export.',
+    '{n} Lastschrift(en) mit einem Mandat, das erst in der Zukunft ausgestellt wird.':
+        '{n} direct debit(s) with a mandate dated in the future.',
+    '{n} Mandatsreferenz(en) haben sich seit dem Abrechnungslauf geändert.':
+        '{n} mandate reference(s) changed since the billing run.',
+    '{n} Mitglied(er) haben seit dem Abrechnungslauf eine andere IBAN. Der SEPA-Export würde das alte Konto verwenden.':
+        '{n} member(s) have a different IBAN since the billing run. The SEPA export would use the old account.',
+    '{n} Position(en) ergeben sich nicht aus Menge, Preis, Rabatt und USt. Wurde die Datei nach dem Export bearbeitet?':
+        '{n} position(s) do not follow from quantity, price, discount and VAT. Was the file edited after export?',
+    '{n} Zählpunkt(e) haben abrechenbare Energie, aber keine Position in den Rechnungsdaten.':
+        '{n} metering point(s) have billable energy but no position in the invoice data.',
+    '{n} abgerechnete Zählpunkt(e) fehlen in den Energiedaten - die abgerechneten kWh lassen sich nicht nachprüfen.':
+        '{n} billed metering point(s) are missing from the energy data - their billed kWh cannot be checked.',
+    '{n} abgerechnete(r) Zählpunkt(e) enthalten Ersatzwerte (L2) des Netzbetreibers. Für die Abrechnung zulässig.':
+        '{n} billed metering point(s) contain substitute values (L2) from the grid operator. Acceptable for billing.',
+    '{n} abgerechnete(r) Zählpunkt(e) haben Viertelstunden ohne Messwert (L0) - die abgerechneten kWh sind unvollständig.':
+        '{n} billed metering point(s) have quarter-hours without a reading (L0) - the billed kWh are incomplete.',
+    '{n} abgerechnete(r) Zählpunkt(e) haben fehlerhafte Werte (L3) im Quartal. Abgerechnet wurde mit diesen Werten.':
+        '{n} billed metering point(s) have faulty values (L3) in the quarter. The billing used these values.',
+    '{n} abgerechnete(r) Zählpunkt(e) stehen nicht in den Stammdaten - andere Gemeinschaft oder veraltete Stammdaten?':
+        '{n} billed metering point(s) are not in the member data - another community, or outdated member data?',
+    'Mailadressen: keine gültige Adresse in den Stammdaten':
+        'Mail addresses: no valid address in the member data',
+    'Eine Zeile auswählen, um alle Hinweise zum Dokument zu sehen.':
+        'Select a row to see all findings for that document.',
+    'Keine Hinweise.':
+        'No findings.',
 }

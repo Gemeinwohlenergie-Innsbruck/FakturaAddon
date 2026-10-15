@@ -156,3 +156,14 @@ def test_checks_tolerate_missing_columns():
     assert check_duplicate_names(empty) == []
     assert check_amounts(empty) == []
     assert check_names_in_energydata(empty, pd.DataFrame(), lambda d, n: None) == []
+
+
+@pytest.mark.parametrize("identifier, expected", [
+    ("Abr_YQ-2026-3", (2026, 3)),
+    ("EEG-2025-2", (2025, 2)),
+    ("Abr_YM-2026-11", None),      # monthly: used to crash as "quarter 11"
+    ("Abr_YH-2026-2", None),
+    ("Abr_Y-2026", None),
+])
+def test_billing_period_accepts_only_quarters(identifier, expected):
+    assert billing_period(pd.DataFrame({"Abrechnung": [identifier]})) == expected
