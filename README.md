@@ -85,6 +85,12 @@ MAIL_SMTP_PORT=587
 LANGUAGE=de
 ```
 
+`MAIL_TEST_ADDRESS` (Einstellungen → *Testmodus – alle Mails an*) sends every
+invoice mail to that one address instead of the members. The subject names
+the member it was meant for, the send preview and the window header say
+TESTMODUS, and test runs are neither filed in *Gesendete_Rechnungen* nor
+recorded as sent. Leave it empty for real runs.
+
 `LANGUAGE` is `de` or `en` and changes the operator's UI only — invoices and
 the mails members receive stay German. Everything here is editable from
 **Einstellungen** (Ctrl+,), which can also test the mail login.

@@ -375,17 +375,24 @@ def render_invoice_mail_body(template, receiver_forename, invquart, invyear, mas
 
 
 def build_invoice_email(sender_email, sender_name, receiver_email, receiver_forename,
-                        invquart, invyear, template, fp_to_invoice, masterdata):
+                        invquart, invyear, template, fp_to_invoice, masterdata,
+                        test_recipient=None):
     """Compose the message that will go out.
 
     Shared by the preview dialog and the send, so what the user approves is
     built by the same code that sends it - a preview assembled separately
     would only be a picture of what we hope happens.
+
+    With ``test_recipient`` (the test mode in Einstellungen) the mail goes
+    there instead, and the subject says who it was meant for.
     """
     email = EmailMessage()
-    email['Subject'] = f"Rechnung {sender_name} {invyear} Quartal {invquart}"
+    subject = f"Rechnung {sender_name} {invyear} Quartal {invquart}"
+    if test_recipient:
+        subject = f"[TEST → {receiver_email}] {subject}"
+    email['Subject'] = subject
     email['From'] = sender_email
-    email['To'] = receiver_email
+    email['To'] = test_recipient or receiver_email
 
     html_body = render_invoice_mail_body(template, receiver_forename, invquart, invyear, masterdata)
     plain_content = (f"Hallo {receiver_forename}. \nAnbei findest du deine Rechnung für das "
@@ -406,9 +413,12 @@ def build_invoice_email(sender_email, sender_name, receiver_email, receiver_fore
 MAIL_TIMEOUT = 30
 
 
-def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_email,receiver_forename,invquart,invyear, template,fp_to_invoice, masterdata,port = 587):
+def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_email,receiver_forename,invquart,invyear, template,fp_to_invoice, masterdata,port = 587,
+                            test_recipient=None):
     email = build_invoice_email(sender_email, sender_name, receiver_email, receiver_forename,
-                                invquart, invyear, template, fp_to_invoice, masterdata)
+                                invquart, invyear, template, fp_to_invoice, masterdata,
+                                test_recipient=test_recipient)
+    receiver_email = test_recipient or receiver_email
     print(f"Sending mail to {receiver_email} with subject {email['Subject']} "
           f"and attachment {os.path.basename(fp_to_invoice) if fp_to_invoice else '(none)'}...")
 
@@ -456,6 +466,12 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
 
         return folder_name
 
+    if test_recipient:
+        # Test mails stay out of Gesendete_Rechnungen, which is the record
+        # of what members actually received.
+        print("... Done (test mode, not filed)")
+        return
+
     # SAVE TO SENT FOLDER
     with imaplib.IMAP4_SSL(host, 993, timeout=MAIL_TIMEOUT) as imap:
         imap.login(sender_email, password)
@@ -485,7 +501,7 @@ class SendPreviewDialog(QDialog):
     # The invoice mail template is designed at 595px plus padding.
     MAIL_WIDTH = 660
 
-    def __init__(self, jobs, missing, build_preview, parent=None):
+    def __init__(self, jobs, missing, build_preview, parent=None, test_recipient=None):
         """
         jobs:    [(display_name, address, attachment_path), ...] - will be sent
         missing: [(display_name, address, expected_filename), ...] - no PDF found
@@ -512,6 +528,14 @@ class SendPreviewDialog(QDialog):
         else:
             summary.setText(tr("{mails} werden verschickt", mails=plural(len(jobs))))
         summary.setStyleSheet("font-weight: 600; padding: 4px;")
+        if test_recipient:
+            banner = QLabel(tr("TESTMODUS - alle Mails gehen an {address}, keine an die "
+                               "Mitglieder. Ausschalten in den Einstellungen.",
+                               address=test_recipient))
+            banner.setWordWrap(True)
+            banner.setStyleSheet("background: #ff9f34; color: #0c1112; font-weight: 600; "
+                                 "padding: 8px; border-radius: 4px;")
+            layout.addWidget(banner)
         layout.addWidget(summary)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -559,7 +583,9 @@ class SendPreviewDialog(QDialog):
         buttons.addStretch(1)
         cancel = QPushButton(tr("Abbrechen"))
         cancel.clicked.connect(self.reject)
-        self.send_button = QPushButton(tr("{mails} verschicken", mails=plural(len(jobs))))
+        self.send_button = QPushButton(
+            tr("{mails} an die Testadresse verschicken", mails=plural(len(jobs))) if test_recipient
+            else tr("{mails} verschicken", mails=plural(len(jobs))))
         self.send_button.setObjectName("primaryButton")
         self.send_button.setDefault(True)
         self.send_button.setEnabled(bool(jobs))

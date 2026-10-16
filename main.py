@@ -1094,6 +1094,11 @@ class MainWindow(QtWidgets.QMainWindow):
         panel.add_action("energy", tr("Von EEG Faktura…"),
                          tr("Energiedaten und QoV für ein Quartal direkt aus EEG Faktura laden"),
                          fetch_energy_from_api)
+        # The same single download fills both rows; offered on the QoV row
+        # too, because that is where people look for it.
+        panel.add_action("energy_qov", tr("Von EEG Faktura…"),
+                         tr("Energiedaten und QoV für ein Quartal direkt aus EEG Faktura laden"),
+                         fetch_energy_from_api)
 
         # Auto-load the templates named in .env. Both loaders return early on an
         # empty path, so an install with no templates configured still starts.
@@ -1118,9 +1123,11 @@ class MainWindow(QtWidgets.QMainWindow):
         Running a quarter twice, or generating invoices against last quarter's
         energy data, was previously invisible until the PDFs came out wrong.
         """
+        test_mail = self.config.get("test_mail", "").strip()
+        test_suffix = tr("  ·  TESTMODUS: Mails an {address}", address=test_mail) if test_mail else ""
         if not self.invoicesdata_loaded or self.invoices.data is None:
             self.status_header.setText(tr("Keine Rechnungsdaten geladen - "
-                                          "zuerst rechts eine Datei laden."))
+                                          "zuerst rechts eine Datei laden.") + test_suffix)
             self.status_header.setObjectName("statusHeaderIdle")
             self.status_header.style().polish(self.status_header)
             return
@@ -1132,11 +1139,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_header.setText(tr(
             "Abrechnung {year} Q{quarter}  ·  {debit} Rechnungen, {credit} Gutschriften  ·  {energy}",
             year=self.thisinvoices_year, quarter=self.thisinvoice_quart,
-            debit=n_debit, credit=n_credit, energy=energy))
+            debit=n_debit, credit=n_credit, energy=energy) + test_suffix)
         self.status_header.setObjectName("statusHeader")
         self.status_header.style().polish(self.status_header)
         self.setWindowTitle(f'{tr("Faktura Infinity Addon")} - '
-                            f'{self.thisinvoices_year} Q{self.thisinvoice_quart}')
+                            f'{self.thisinvoices_year} Q{self.thisinvoice_quart}'
+                            + (" - TESTMODUS" if test_mail else ""))
 
     def init_menubardata_Infinity(self):
 
@@ -1892,6 +1900,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             missing.append(f"{person_data['E-Mail']}: {nameinvoicefile} nicht gefunden")
                             missing_rows.append((display, person_data["E-Mail"], nameinvoicefile))
 
+                    # Test mode (Einstellungen): every mail to one address.
+                    test_recipient = self.config.get("test_mail", "").strip() or None
                     jobs_by_address = {person_data["E-Mail"]: (person_data, path)
                                        for person_data, path in jobs}
 
@@ -1906,14 +1916,16 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.config.get("my_mail", ""), self.config.get("EEG_name", ""),
                             address, person_data["Name 1"],
                             self.thisinvoice_quart, self.thisinvoices_year,
-                            self.emails.template, path, self.masterdata)
+                            self.emails.template, path, self.masterdata,
+                            test_recipient=test_recipient)
                         html = ""
                         for part in message.walk():
                             if part.get_content_type() == "text/html":
                                 html = part.get_content()
                         return message["Subject"], html, os.path.basename(path)
 
-                    preview = SendPreviewDialog(preview_rows, missing_rows, build_preview, parent=self)
+                    preview = SendPreviewDialog(preview_rows, missing_rows, build_preview, parent=self,
+                                                test_recipient=test_recipient)
                     if not preview.exec_() or not preview.result:
                         print("Send cancelled in the preview dialog")
                         return
@@ -1937,7 +1949,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 person_data["E-Mail"], person_data["Name 1"],
                                 self.thisinvoice_quart, self.thisinvoices_year,
                                 self.emails.template, fpinvoicefile, self.masterdata,
-                                port=smtp_port)
+                                port=smtp_port, test_recipient=test_recipient)
                             sent.append(person_data["E-Mail"])
                             for number in documents_of_member(self.invoices.data["list"],
                                                               person_data["Name 1"],
@@ -1949,7 +1961,9 @@ class MainWindow(QtWidgets.QMainWindow):
                             traceback.print_exc()
                             failed.append(f"{person_data['E-Mail']}: {e}")
 
-                    if delivered and self.creditor_key():
+                    # A test run delivered nothing to members, so it must not
+                    # make the real run warn "already mailed".
+                    if delivered and self.creditor_key() and not test_recipient:
                         try:
                             ledger.record(ledger.MAIL, self.creditor_key(), self.billing_label(),
                                           delivered)

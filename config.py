@@ -69,6 +69,7 @@ ENV_KEYS = {
     "template_export_invoice": "TEMPLATE_EXPORT_INVOICE",
     "template_email":          "TEMPLATE_EMAIL",
     "language":                "LANGUAGE",
+    "test_mail":               "MAIL_TEST_ADDRESS",
 }
 
 

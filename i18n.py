@@ -550,4 +550,16 @@ EN = {
         'Select a row to see all findings for that document.',
     'Keine Hinweise.':
         'No findings.',
+
+    # --- mail test mode -----------------------------------------------------
+    '  ·  TESTMODUS: Mails an {address}':
+        '  ·  TEST MODE: mail goes to {address}',
+    'TESTMODUS - alle Mails gehen an {address}, keine an die Mitglieder. Ausschalten in den Einstellungen.':
+        'TEST MODE - every mail goes to {address}, none to members. Turn it off in Settings.',
+    'Testmodus - alle Mails an:':
+        'Test mode - all mail to:',
+    'leer lassen: Mails gehen an die Mitglieder':
+        'leave empty: mail goes to the members',
+    '{mails} an die Testadresse verschicken':
+        'Send {mails} to the test address',
 }

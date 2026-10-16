@@ -555,6 +555,8 @@ class SettingsDialog(QDialog):
         smtp_row.addWidget(QLabel(tr("Port:")))
         smtp_row.addWidget(self.edit_smtp_port)
         self.edit_eeg_name    = QLineEdit()
+        self.edit_test_mail   = QLineEdit()
+        self.edit_test_mail.setPlaceholderText(tr("leer lassen: Mails gehen an die Mitglieder"))
         self.combo_language = QComboBox()
         for code, label in i18n.LANGUAGES.items():
             self.combo_language.addItem(label, code)
@@ -586,6 +588,7 @@ class SettingsDialog(QDialog):
         form.addRow(tr("Mail-Passwort:"), pw_row)
         form.addRow(tr("IMAP-Server (Posteingang):"), self.edit_imap_server)
         form.addRow(tr("SMTP-Server (Versand):"), smtp_row)
+        form.addRow(tr("Testmodus - alle Mails an:"), self.edit_test_mail)
         form.addRow(tr("Basisordner:"), dir_row)
         form.addRow(tr("Name der EEG:"), self.edit_eeg_name)
         form.addRow(tr("Rechnungsvorlage:"), invoice_row)
@@ -626,6 +629,7 @@ class SettingsDialog(QDialog):
         self.edit_smtp_server.setText(saved.get("smtp_server", "") or saved.get("imap_server", ""))
         self.edit_smtp_port.setText(saved.get("smtp_port", "") or "587")
         self.edit_my_mail_pw.setText(saved.get("my_mail_pw", ""))
+        self.edit_test_mail.setText(saved.get("test_mail", ""))
         self.edit_home_directory.setText(saved.get("home_directory", ""))
         self.edit_eeg_name.setText(saved.get("EEG_name", ""))
         if saved.get("template_export_invoice"):
@@ -687,6 +691,7 @@ class SettingsDialog(QDialog):
                                          or self.edit_imap_server.text().strip()),
             "smtp_port":                self.edit_smtp_port.text().strip() or "587",
             "my_mail_pw":               self.edit_my_mail_pw.text(),
+            "test_mail":                self.edit_test_mail.text().strip(),
             "home_directory":           self.edit_home_directory.text().strip(),
             "EEG_name":                 self.edit_eeg_name.text().strip(),
             "template_export_invoice":  self.edit_template_invoice.text().strip(),
