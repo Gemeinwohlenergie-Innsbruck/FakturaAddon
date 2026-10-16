@@ -300,7 +300,7 @@ def send_mail(subject = '', body = '',senderadress = '',password = '', receivera
     msgBody = message.as_string()
 
     server = SMTP(host, port)
-    server.starttls()
+    server.starttls(context=mail_ssl_context())
     server.login(senderadress, password)
     server.sendmail(senderadress, receiveradress, msgBody)
 
@@ -413,6 +413,22 @@ def build_invoice_email(sender_email, sender_name, receiver_email, receiver_fore
 MAIL_TIMEOUT = 30
 
 
+def mail_ssl_context():
+    """TLS context that can verify certificates in the packaged app too.
+
+    ssl.create_default_context() trusts whatever CA file the bundled
+    OpenSSL was built to look for. From a source checkout that exists
+    (Homebrew's cert.pem); inside the .app it does not, so every server -
+    mail.your-server.de included - failed with CERTIFICATE_VERIFY_FAILED.
+    certifi's bundle ships with the app.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_email,receiver_forename,invquart,invyear, template,fp_to_invoice, masterdata,port = 587,
                             test_recipient=None):
     email = build_invoice_email(sender_email, sender_name, receiver_email, receiver_forename,
@@ -422,7 +438,7 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
     print(f"Sending mail to {receiver_email} with subject {email['Subject']} "
           f"and attachment {os.path.basename(fp_to_invoice) if fp_to_invoice else '(none)'}...")
 
-    context = ssl.create_default_context()
+    context = mail_ssl_context()
 
     # Without TLS the password and the invoice PDF cross the network in the
     # clear. 465 is implicit TLS; 587 and friends upgrade via STARTTLS.
@@ -473,7 +489,7 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
         return
 
     # SAVE TO SENT FOLDER
-    with imaplib.IMAP4_SSL(host, 993, timeout=MAIL_TIMEOUT) as imap:
+    with imaplib.IMAP4_SSL(host, 993, timeout=MAIL_TIMEOUT, ssl_context=mail_ssl_context()) as imap:
         imap.login(sender_email, password)
         folder = ensure_folder(imap, "INBOX.Gesendete_Rechnungen")
         # show folders
@@ -689,7 +705,7 @@ def test_mail_login(address, password, imap_host, smtp_host, smtp_port, timeout=
 
     if imap_host:
         try:
-            with imaplib.IMAP4_SSL(imap_host, 993, timeout=timeout) as imap:
+            with imaplib.IMAP4_SSL(imap_host, 993, timeout=timeout, ssl_context=mail_ssl_context()) as imap:
                 imap.login(address, password)
             lines.append(f"IMAP ({imap_host}:993): OK")
         except Exception as e:
@@ -704,7 +720,7 @@ def test_mail_login(address, password, imap_host, smtp_host, smtp_port, timeout=
         except (TypeError, ValueError):
             port = 587
         try:
-            context = ssl.create_default_context()
+            context = mail_ssl_context()
             if port == 465:
                 session = smtplib.SMTP_SSL(smtp_host, port, context=context, timeout=timeout)
             else:

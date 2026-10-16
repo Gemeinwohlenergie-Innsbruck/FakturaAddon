@@ -31,7 +31,7 @@ from PyQt5.QtWidgets import QHBoxLayout
 import datetime as dt
 import imaplib
 from emailing import (MailSelection, LoginPrompt, selectmail, MailAdressSelection,
-                      send_mail_to_one_person, build_invoice_email, SendPreviewDialog)
+                      send_mail_to_one_person, build_invoice_email, SendPreviewDialog, mail_ssl_context)
 import email
 from email.header import decode_header
 
@@ -1449,7 +1449,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             def try_logging_in_f(user, pw):
                 print(f"try logging in to IMAP server as {user}")
-                imap = imaplib.IMAP4_SSL(self.imap_server)
+                imap = imaplib.IMAP4_SSL(self.imap_server, ssl_context=mail_ssl_context())
                 # # authenticate
                 imap.login(user, pw)
                 selectmail(self,imap)
@@ -1846,7 +1846,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 def try_logging_in_f(user, pw, host):
                     print(f"try logging in to IMAP server as {user}")
                     try:
-                        imap = imaplib.IMAP4_SSL(host)
+                        imap = imaplib.IMAP4_SSL(host, ssl_context=mail_ssl_context())
                         # # authenticate
                         imap.login(user, pw)
                         return True

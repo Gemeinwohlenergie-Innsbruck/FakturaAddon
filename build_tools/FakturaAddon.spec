@@ -14,7 +14,7 @@ a = Analysis(
     ],
     # docx2pdf reaches Word through appscript, which PyInstaller cannot see
     # by following imports alone.
-    hiddenimports=["appscript", "docx2pdf"],
+    hiddenimports=["appscript", "docx2pdf", "certifi"],
     excludes=["tkinter", "PyQt5.QtWebEngineWidgets", "pytest"],
     noarchive=False,
 )
