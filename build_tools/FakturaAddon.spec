@@ -34,8 +34,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "FakturaAddon",
         "CFBundleDisplayName": "Faktura Infinity Addon",
-        "CFBundleShortVersionString": "2.0.3",
-        "CFBundleVersion": "2.0.3",
+        "CFBundleShortVersionString": "2.1.0",
+        "CFBundleVersion": "2.1.0",
         "NSHumanReadableCopyright": "Gemeinwohl Energie Innsbruck",
         # Retina: without this Qt renders into a 1x buffer and the whole UI
         # looks soft on any modern Mac.

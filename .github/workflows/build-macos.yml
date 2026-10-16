@@ -85,5 +85,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/FakturaAddon-macos-arm64.dmg
+          # v2.1.0-rc1 and the like are test builds: publish them as
+          # pre-releases so they never become the "Latest" download.
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
