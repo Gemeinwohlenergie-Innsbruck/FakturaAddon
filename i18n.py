@@ -572,4 +572,18 @@ EN = {
         '{n} member number(s) belong to more than one person in the member data - please correct in EEG Faktura.',
     '{n} Name(n) gehören zu mehreren Mitgliedschaften mit eigenem Konto. Sie bekommen getrennte Rechnungen und Zahlungen - bitte kurz prüfen, ob das stimmt.':
         '{n} name(s) belong to several memberships with their own account. They get separate invoices and payments - please check that this is intended.',
+    'Zeit':
+        'Time',
+    'Filtern… (sucht in allen Spalten)':
+        'Filter… (searches all columns)',
+    '{shown} von {total} Zeilen':
+        '{shown} of {total} rows',
+    '{total} Zeilen':
+        '{total} rows',
+    'Filtern… (Name, Nummer, Hinweis)':
+        'Filter… (name, number, finding)',
+    'Hilfe':
+        'Help',
+    'Anleitung: Ablauf und Datenquellen…':
+        'Guide: steps and where the data comes from…',
 }

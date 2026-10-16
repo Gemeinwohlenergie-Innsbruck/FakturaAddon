@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 import subprocess
 import traceback
 import threading
@@ -16,6 +17,8 @@ import sys
 from PyQt5.QtWidgets import QLabel, QFileDialog, QMessageBox, QGridLayout, QTableWidget, QTableWidgetItem, QListWidget, QWidget, QListWidgetItem, QCheckBox, QListWidgetItem, QPushButton, QVBoxLayout, QDialog
 from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog, FetchEnergyDialog, run_in_background
 import eegfaktura_api
+from tables import DataFrameTable
+from help import HelpDialog
 import ledger
 import review
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
@@ -324,6 +327,27 @@ class AcceptErrorsDialog(QDialog):
         self.ok.setEnabled(self.confirm.isChecked() and bool(self.reason.text().strip()))
 
 
+class SortableItem(QTableWidgetItem):
+    """Sorts by a key set with set_key: numbers as numbers, blanks last."""
+
+    KEY_ROLE = Qt.UserRole + 1
+
+    def set_key(self, value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            key = (2, 0.0, "")
+        elif isinstance(value, (int, float, Decimal)):
+            key = (0, float(value), "")
+        else:
+            key = (1, 0.0, str(value).casefold())
+        self.setData(self.KEY_ROLE, key)
+
+    def __lt__(self, other):
+        mine, theirs = self.data(self.KEY_ROLE), other.data(self.KEY_ROLE)
+        if mine is None or theirs is None:
+            return super().__lt__(other)
+        return tuple(mine) < tuple(theirs)
+
+
 class ReviewDialog(QDialog):
     """Every document with what was checked against it, before anything is charged.
 
@@ -370,10 +394,14 @@ class ReviewDialog(QDialog):
         layout.addLayout(facts)
 
         bar = QtWidgets.QHBoxLayout()
+        self.search = QtWidgets.QLineEdit()
+        self.search.setPlaceholderText(tr("Filtern… (Name, Nummer, Hinweis)"))
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(lambda *_: self.apply_filter())
+        bar.addWidget(self.search, 1)
         self.only_issues = QCheckBox(tr("Nur Dokumente mit Hinweisen zeigen"))
-        self.only_issues.toggled.connect(self.apply_filter)
+        self.only_issues.toggled.connect(lambda *_: self.apply_filter())
         bar.addWidget(self.only_issues)
-        bar.addStretch(1)
         all_findings = QPushButton(tr("Alle Befunde…"))
         all_findings.clicked.connect(lambda: ValidationDialog(self.findings, parent=self).exec_())
         bar.addWidget(all_findings)
@@ -385,13 +413,20 @@ class ReviewDialog(QDialog):
         self.grid.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.grid.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         right = Qt.AlignRight | Qt.AlignVCenter
+        status_rank = {validation.ERROR: 0, validation.WARNING: 1, validation.INFO: 2, review.OK: 3}
         for row, (_, record) in enumerate(table.iterrows()):
-            tick = QTableWidgetItem()
+            tick = SortableItem()
             tick.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             tick.setCheckState(Qt.Unchecked)
+            # Rows can be re-sorted, so each row carries its record's position.
+            tick.setData(Qt.UserRole, row)
+            tick.set_key(row)
             self.grid.setItem(row, 0, tick)
             for col, (_, key) in enumerate(self.COLUMNS[1:], start=1):
-                item = QTableWidgetItem(self.display(key, record[key]))
+                item = SortableItem(self.display(key, record[key]))
+                value = record[key]
+                item.set_key(status_rank.get(value, 9) if key == "Status"
+                             else " ".join(value) if key == "Hinweise" else value)
                 if key in ("Betrag", "kWh abgerechnet", "kWh Energiedaten", "Abweichung kWh"):
                     item.setTextAlignment(right)
                 if key == "Status":
@@ -409,6 +444,9 @@ class ReviewDialog(QDialog):
         # the panel below and in the tooltip.
         self.grid.setColumnWidth(len(self.COLUMNS) - 1, 260)
         self.grid.horizontalHeader().setStretchLastSection(True)
+        self.grid.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
+        self.grid.setSortingEnabled(True)
+        self.grid.sortByColumn(-1, Qt.AscendingOrder)        # the export's order until clicked
         self.grid.itemChanged.connect(self.update_progress)
         self.grid.currentCellChanged.connect(lambda row, *_: self.show_details(row))
         layout.addWidget(self.grid, 1)
@@ -463,10 +501,14 @@ class ReviewDialog(QDialog):
             return theme.OK
         return ValidationDialog.severity_colour(status)
 
+    def record_index(self, row):
+        """Position in self.table of the record shown in this (possibly re-sorted) row."""
+        return self.grid.item(row, 0).data(Qt.UserRole)
+
     def show_details(self, row):
-        if row < 0 or row >= len(self.table):
+        if row < 0 or row >= self.grid.rowCount():
             return
-        record = self.table.iloc[row]
+        record = self.table.iloc[self.record_index(row)]
         lines = record["Hinweise"] or [tr("Keine Hinweise.")]
         self.details.setText(f"{record['Nummer']} · {record['Name']}:\n" + "\n".join(f"• {l}" for l in lines))
 
@@ -479,13 +521,19 @@ class ReviewDialog(QDialog):
                                  done=sum(ticks), total=len(ticks)))
         self.approve_button.setEnabled(bool(ticks) and all(ticks))
 
-    def apply_filter(self, only_issues):
-        for row, status in enumerate(self.table["Status"]):
-            self.grid.setRowHidden(row, only_issues and status == review.OK)
+    def apply_filter(self):
+        only_issues = self.only_issues.isChecked()
+        needle = self.search.text().strip().casefold()
+        for row in range(self.grid.rowCount()):
+            record = self.table.iloc[self.record_index(row)]
+            haystack = " ".join([str(record["Nummer"]), str(record["Name"]), str(record["Typ"])]
+                                + list(record["Hinweise"])).casefold()
+            hidden = (only_issues and record["Status"] == review.OK) or (needle and needle not in haystack)
+            self.grid.setRowHidden(row, bool(hidden))
 
     def tick_clean(self):
-        for row, status in enumerate(self.table["Status"]):
-            if status in (review.OK, validation.INFO):
+        for row in range(self.grid.rowCount()):
+            if self.table.iloc[self.record_index(row)]["Status"] in (review.OK, validation.INFO):
                 self.grid.item(row, 0).setCheckState(Qt.Checked)
 
     def approve(self):
@@ -693,14 +741,24 @@ class MainWindow(QtWidgets.QMainWindow):
             close_action.triggered.connect(self.close)
             infinity_menu.addAction(close_action)
 
+        # Last, where people look for it; F1 from anywhere in the window.
+        help_menu = menubar.addMenu(tr("Hilfe"))
+        help_action = QtWidgets.QAction(tr("Anleitung: Ablauf und Datenquellen…"), self)
+        help_action.setShortcut(QtGui.QKeySequence.HelpContents)
+        help_action.setMenuRole(QtWidgets.QAction.NoRole)
+        help_action.triggered.connect(lambda: HelpDialog(self).exec_())
+        help_menu.addAction(help_action)
+
         self.overallverticallayout.addWidget(self.build_header())
 
         self.horizontalLayout = QtWidgets.QHBoxLayout()
         self.verticalLayout0 = QtWidgets.QVBoxLayout()  # left: consumer data
         self.verticalLayout1 = QtWidgets.QVBoxLayout()  # right: producer data and files
-        self.table_0_0 = TableView()
-        self.table_0_1 = TableView()
-        self.table_1_0 = TableView()
+        # Filterable, sortable, resizable and complete - the old TableView
+        # showed 200 rows and could only be scrolled.
+        self.table_0_0 = DataFrameTable()
+        self.table_0_1 = DataFrameTable()
+        self.table_1_0 = DataFrameTable()
         self.filepanel = FileLoadPanel(self.FILE_ROWS)
 
         # Built before init_loading_functionality, because its auto-load of the

@@ -721,12 +721,16 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         unique_meteringpoints = meteringpointids.unique()
         single_meteringpoint = unique_meteringpoints.shape[0] == 1
         for energydirection in energydirections.unique():
+            # Only this direction's meters. Asking every meter for every
+            # direction warned "keine Energiedaten für CONSUMPTION" about the
+            # production meter of anyone who has one of each.
+            direction_meters = list(meteringpointids[energydirections == energydirection].unique())
             # More than four metering points: one aggregated plot instead of
             # one per point, otherwise the chart is unreadable.
-            if len(unique_meteringpoints) > 4:
+            if len(direction_meters) > 4:
                 targets = [None]
             else:
-                targets = list(unique_meteringpoints)
+                targets = direction_meters
 
             for meteringpointid in targets:
                 series = read_series(energydirection, meteringpointid)

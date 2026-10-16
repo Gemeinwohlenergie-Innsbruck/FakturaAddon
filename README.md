@@ -175,6 +175,11 @@ What is checked, beyond missing IBANs, mandates and mail addresses:
   in `ledger.jsonl` next to the settings. Exporting a document again needs
   an explicit confirmation.
 
+## Help in the app
+
+**Hilfe → Anleitung** (F1) lists the quarterly steps and where each file comes
+from in EEG Faktura, in German or English depending on the language setting.
+
 ## Run
 
 ```
