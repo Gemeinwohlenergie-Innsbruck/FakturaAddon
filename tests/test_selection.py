@@ -169,3 +169,10 @@ def test_preview_documents_without_numbers_stay_apart():
     details = invoice_list.assign(**{"Pos. Bruttobetrag": [40.0, 55.0, 30.0]})
     selected, _ = select_invoice_positions(invoice_list, details, [False, True, False])
     assert list(selected["Pos. Bruttobetrag"]) == [55.0]
+
+
+def test_invoice_file_names_have_no_nan_and_no_slashes():
+    from selection import invoice_file_stem
+    assert invoice_file_stem("2026", "3", "Anna ", " Müller") == "Rechnung_2026_q3_Anna_Müller"
+    assert invoice_file_stem("2026", "3", "Sonnenstrom GmbH", float("nan")) == "Rechnung_2026_q3_Sonnenstrom GmbH"
+    assert invoice_file_stem("2026", "3", "Verein A/B", None) == "Rechnung_2026_q3_Verein A-B"

@@ -139,3 +139,18 @@ def documents_of_member(invoice_list, first, last,
     wanted = _name_key(first, last)
     return [document_id(row) for _, row in invoice_list.iterrows()
             if _name_key(row[invoice_first], row[invoice_last]) == wanted]
+
+
+def invoice_file_stem(year, quarter, first, last):
+    """"Rechnung_2026_q3_Anna_Müller" - shared by the invoice run and the mail run.
+
+    Both used to build it themselves, and a member with no surname (a
+    company, an association) came out as "..._nan": empty Excel cells are
+    NaN. That only worked because both sides got it equally wrong. Blank
+    parts are dropped, spaces trimmed, and characters a file name cannot
+    hold (a "/" in a company name) replaced.
+    """
+    parts = [_document_key(part) for part in (first, last)]
+    name = "_".join(" ".join(p.split()) for p in parts if p)
+    name = re.sub(r'[\\/:*?"<>|]+', "-", name) or "ohne_Name"
+    return f"Rechnung_{year}_q{quarter}_{name}"

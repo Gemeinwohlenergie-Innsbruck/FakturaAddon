@@ -9,6 +9,7 @@ from io import BytesIO
 from PyQt5.QtWidgets import QMessageBox
 
 from i18n import tr
+from selection import invoice_file_stem
 
 
 # matplotlib and docx2pdf are imported on first use, not at module import.
@@ -734,7 +735,8 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
 
 
         #save
-        namefile = f"Rechnung_{year}_q{quart}_{invoicethis["Empfänger Vorame"].iloc[0]}_{invoicethis["Empfänger Nachname"].iloc[0]}"
+        namefile = invoice_file_stem(year, quart, invoicethis["Empfänger Vorame"].iloc[0],
+                                     invoicethis["Empfänger Nachname"].iloc[0])
         savepathdocx = os.path.join(savedirfp, f"{namefile}.docx")
         print(f"Save invoice of {name} to {savepathdocx}")
         invoicetemplate.save(savepathdocx)

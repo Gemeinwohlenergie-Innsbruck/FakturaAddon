@@ -19,7 +19,7 @@ import eegfaktura_api
 import ledger
 import review
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
-from selection import select_invoice_positions, members_with_invoices, documents_of_member, document_ids
+from selection import select_invoice_positions, members_with_invoices, documents_of_member, document_ids, invoice_file_stem
 from config import ENV_PATH, load_env
 import config as config_module
 import validation
@@ -1887,9 +1887,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     jobs, missing = [], []
                     preview_rows, missing_rows = [], []
                     for _, person_data in personswithinvoicesselected.iterrows():
-                        display = f"{person_data['Name 1']} {person_data['Name 2']}"
-                        receivername = f"{person_data['Name 1']}_{person_data['Name 2']}"
-                        nameinvoicefile = f"Rechnung_{self.thisinvoices_year}_q{self.thisinvoice_quart}_{receivername}.pdf"
+                        display = " ".join(str(x) for x in (person_data['Name 1'], person_data['Name 2'])
+                                           if not pd.isna(x)).strip()
+                        nameinvoicefile = invoice_file_stem(self.thisinvoices_year, self.thisinvoice_quart,
+                                                            person_data['Name 1'], person_data['Name 2']) + ".pdf"
                         fpinvoicefile = os.path.join(self.safepath_this_invoices, nameinvoicefile)
                         if os.path.exists(fpinvoicefile):
                             jobs.append((person_data, fpinvoicefile))
