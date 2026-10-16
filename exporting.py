@@ -1,4 +1,5 @@
 import os
+import sys
 import pandas as pd
 import datetime as dt
 import numpy as np
@@ -255,6 +256,86 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
 #personaldata =  masterdata.data.iloc[0]
 # invoicedata = invoices.data['detailed'][invoices.data['detailed']['Empfänger Name'] == fullname]
 #invoicetemplate = invoices.template_for_export
+
+WORD_APP = "/Applications/Microsoft Word.app"
+
+
+def word_available():
+    """docx2pdf drives Word; without Word on a Mac it can fail without raising."""
+    if sys.platform == "darwin":
+        return os.path.exists(WORD_APP)
+    return sys.platform == "win32"
+
+
+def _soffice_env():
+    """A clean environment for LibreOffice.
+
+    A frozen app hands its own Python and library settings to every child;
+    LibreOffice ships its own Python and must not see them.
+    """
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("PYTHON", "DYLD_", "LD_LIBRARY", "QT_", "_MEI"))}
+    env.setdefault("HOME", os.path.expanduser("~"))
+    env["PATH"] = env.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin"
+    return env
+
+
+def _soffice_profile():
+    """A LibreOffice profile of the app's own.
+
+    With the user's profile, a LibreOffice window that is open - or one that
+    was never started and still wants its first-run setup - makes headless
+    conversion exit without writing anything.
+    """
+    try:
+        import config
+        directory = config.user_data_dir() / "libreoffice-profile"
+    except Exception:
+        directory = os.path.join(os.path.expanduser("~"), ".fakturaaddon-libreoffice")
+    os.makedirs(directory, exist_ok=True)
+    return "file://" + str(directory).replace(" ", "%20")
+
+
+def convert_to_pdf(doc_path, outdir, timeout=180):
+    """Convert one .docx to .pdf. Returns (pdf_path, None) or (None, reason).
+
+    Runs on a worker thread, so it must not touch Qt widgets. Word first if
+    it is installed, then LibreOffice; and success means a PDF that exists,
+    not a converter that returned.
+    """
+    pdf_path = os.path.splitext(doc_path)[0] + ".pdf"
+    reasons = []
+    if word_available():
+        try:
+            from docx2pdf import convert     # imported here, not at startup
+            convert(doc_path, pdf_path)
+        except BaseException as word_error:  # docx2pdf calls sys.exit on errors
+            reasons.append(f"Word: {word_error!r}")
+        if os.path.exists(pdf_path):
+            return pdf_path, None
+        reasons.append("Word hat keine PDF geschrieben")
+    soffice = find_soffice()
+    if soffice is None:
+        reasons.append("LibreOffice nicht gefunden (Word oder LibreOffice installieren)")
+        return None, "; ".join(reasons)
+    try:
+        result = subprocess.run(
+            [soffice, f"-env:UserInstallation={_soffice_profile()}", "--headless",
+             "--norestore", "--convert-to", "pdf", "--outdir", outdir, doc_path],
+            capture_output=True, text=True, timeout=timeout, env=_soffice_env(),
+            stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        reasons.append(f"LibreOffice hat nach {timeout} s nicht geantwortet")
+        return None, "; ".join(reasons)
+    except Exception as soffice_error:
+        reasons.append(f"LibreOffice: {soffice_error!r}")
+        return None, "; ".join(reasons)
+    if os.path.exists(pdf_path):
+        return pdf_path, None
+    output = " ".join((result.stderr or result.stdout or "").split())[-300:]
+    reasons.append(f"LibreOffice ({soffice}) Exit {result.returncode}: {output or 'keine Ausgabe'}")
+    return None, "; ".join(reasons)
+
 
 def find_soffice():
     """Locate the LibreOffice binary, or None.
@@ -658,40 +739,11 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         print(f"Save invoice of {name} to {savepathdocx}")
         invoicetemplate.save(savepathdocx)
 
-        def generate_pdf(doc_path, path):
-            """Convert one .docx to .pdf. Returns the pdf path, or None on failure.
-
-            Runs on a worker thread, so it must not touch Qt widgets - failures
-            are returned to the caller and reported once at the end.
-            """
-            pdf_path = doc_path.rsplit(".", 1)[0] + ".pdf"
-            try:
-                from docx2pdf import convert     # imported here, not at startup
-                convert(doc_path, pdf_path)
-            except Exception as word_error:
-                print(f"Word conversion failed ({word_error}), trying LibreOffice")
-                soffice = find_soffice()
-                if soffice is None:
-                    print("No LibreOffice found either - install Word or LibreOffice "
-                          "to get PDFs instead of .docx")
-                    return None
-                try:
-                    subprocess.call([soffice,
-                                     '--headless',
-                                     '--convert-to',
-                                     'pdf',
-                                     '--outdir',
-                                     path,
-                                     doc_path])
-                except Exception as soffice_error:
-                    print(f"LibreOffice conversion failed too: {soffice_error}")
-                    return None
-            return pdf_path if os.path.exists(pdf_path) else None
-
         print(f"Save invoice of {name} to {savedirfp}")
 
-        if generate_pdf(savepathdocx, savedirfp) is None:
+        pdf, why = convert_to_pdf(savepathdocx, savedirfp)
+        if pdf is None:
             problems.append(f"{name}: PDF-Erzeugung fehlgeschlagen - nur die .docx wurde gespeichert. "
-                            f"Ist Word oder LibreOffice installiert?")
+                            f"{why}")
 
     return problems
