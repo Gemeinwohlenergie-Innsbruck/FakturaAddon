@@ -55,8 +55,8 @@ und in der Breite ziehen.</p>
 
 <h3>4. Erstellen und verschicken</h3>
 <ol>
-<li><b>Rechnungen erstellen</b> &ndash; Ordner wählen; eine PDF pro Mitgliedschaft. Braucht Word oder LibreOffice
- (LibreOffice dabei geschlossen lassen). Die erste PDF kurz ansehen.</li>
+<li><b>Rechnungen erstellen</b> &ndash; Format wählen (PDF, Word oder beides), dann den Ordner; eine Rechnung pro Mitgliedschaft. PDF braucht Word oder LibreOffice
+ (LibreOffice dabei geschlossen lassen); für den Mailversand werden PDFs gebraucht. Die erste PDF kurz ansehen.</li>
 <li><b>Rechnungen verschicken</b> &ndash; ein Fenster: links alle Empfänger:innen (abhaken, filtern, sortieren),
  rechts die gewählte Mail genau so, wie sie verschickt wird. Erst <i>… Mails verschicken</i> sendet wirklich.</li>
 <li><b>SEPA-Export für Infinity</b> &ndash; Auswahl prüfen; die Frage nach einzelnen Positionen mit <b>Nein</b>
@@ -129,8 +129,8 @@ and resized by dragging.</p>
 
 <h3>4. Create and send</h3>
 <ol>
-<li><b>Create invoices</b> &ndash; choose a folder; one PDF per membership. Needs Word or LibreOffice
- (keep LibreOffice closed meanwhile). Look at the first PDF.</li>
+<li><b>Create invoices</b> &ndash; choose the format (PDF, Word or both), then the folder; one invoice per membership. PDF needs Word or LibreOffice
+ (keep LibreOffice closed meanwhile); sending mail needs the PDFs. Look at the first PDF.</li>
 <li><b>Send invoices</b> &ndash; one window: all recipients on the left (tick, filter, sort), the selected mail
  on the right exactly as it will be sent. Nothing is sent until <i>Send … mails</i>.</li>
 <li><b>SEPA export for Infinity</b> &ndash; check the selection; answer <b>No</b> to the question about separate

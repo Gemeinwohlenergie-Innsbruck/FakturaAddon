@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QPu
                              QLabel, QScrollArea, QTextEdit, QTextBrowser, QFormLayout,
                              QLineEdit, QGridLayout, QCheckBox, QDialog, QSplitter,
                              QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
 from PyQt5.QtGui import QBrush, QColor
 import email
 from email.header import decode_header
@@ -18,6 +18,7 @@ import imaplib
 from datetime import datetime
 
 from i18n import tr
+import theme
 from tables import SortableItem
 
 
@@ -375,6 +376,9 @@ def render_invoice_mail_body(template, receiver_forename, invquart, invyear, mas
                            community_IBAN=meta.get('IBAN', ''))
 
 
+LOGO_CID = "gei-logo"
+
+
 def build_invoice_email(sender_email, sender_name, receiver_email, receiver_forename,
                         invquart, invyear, template, fp_to_invoice, masterdata,
                         test_recipient=None):
@@ -396,10 +400,20 @@ def build_invoice_email(sender_email, sender_name, receiver_email, receiver_fore
     email['To'] = test_recipient or receiver_email
 
     html_body = render_invoice_mail_body(template, receiver_forename, invquart, invyear, masterdata)
-    plain_content = (f"Hallo {receiver_forename}. \nAnbei findest du deine Rechnung für das "
-                     f"{invquart}, {invyear} \n Mit lieben Grüßen, \n{sender_name} \n\n|")
+    plain_content = (f"Hallo {receiver_forename},\n\n"
+                     f"im Anhang findest du deine Abrechnung für das {invquart}. Quartal {invyear} als PDF.\n"
+                     f"Darin stehen alle Positionen und Beträge und dein Energieverlauf.\n\n"
+                     f"Fragen zur Abrechnung? Antworte einfach auf diese Mail.\n\n"
+                     f"Danke, dass du Teil unserer Energiegemeinschaft bist!\n\n"
+                     f"Liebe Grüße\n{sender_name}\n")
     email.set_content(plain_content)
     email.add_alternative(html_body, subtype='html')
+    if f"cid:{LOGO_CID}" in html_body:
+        # Mail clients cannot load the logo from the app: it travels inside
+        # the mail as a related image, which the template references by cid.
+        with open(theme.logo_path(), "rb") as logo:
+            email.get_payload()[-1].add_related(logo.read(), maintype="image", subtype="png",
+                                                cid=f"<{LOGO_CID}>", filename="logo.png")
 
     if fp_to_invoice:
         with open(fp_to_invoice, 'rb') as content_file:
@@ -723,6 +737,9 @@ class SendPreviewDialog(QDialog):
         """
         if not html:
             return ""
+        # The preview has no attachments to resolve cid: against; show the
+        # logo from the app's own copy instead.
+        html = html.replace(f"cid:{LOGO_CID}", QUrl.fromLocalFile(theme.logo_path()).toString())
         try:
             soup = BeautifulSoup(html, "html.parser")
             body = soup.find(id="MAILSTYLE")

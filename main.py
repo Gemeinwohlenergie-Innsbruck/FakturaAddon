@@ -1749,6 +1749,18 @@ class MainWindow(QtWidgets.QMainWindow):
             if check:
                 if not confirm_despite_errors("Rechnungen erstellen"):
                     return
+                # PDF, Word or both; the last choice is the default next time.
+                choices = [(tr("PDF"), ("pdf",)), (tr("Word (.docx)"), ("docx",)),
+                           (tr("PDF und Word (.docx)"), ("pdf", "docx"))]
+                labels = [label for label, _ in choices]
+                last = QSettings().value("invoices/format", labels[0])
+                label, ok = QtWidgets.QInputDialog.getItem(
+                    self, tr("Rechnungen erstellen"), tr("In welchem Format sollen die Rechnungen gespeichert werden?"),
+                    labels, labels.index(last) if last in labels else 0, False)
+                if not ok:
+                    return
+                QSettings().setValue("invoices/format", label)
+                formats = dict(choices)[label]
                 # first create a dict with all the info for the invoice, then render the template, then do it for all persons.
                 self.safepath_this_invoices = load_filepath(self, tr("Wo sollen die Rechnungen gespeichert werden?"), pathisdir=True,homedir= self.home_directory)
                 if self.safepath_this_invoices is not None:
@@ -1827,7 +1839,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         return produce_invoices_and_save(
                             self.energydata.data, self.invoices.data["detailed"], self.masterdata,
                             self.invoices.template, self.safepath_this_invoices, callback,
-                            should_cancel=cancel_requested.is_set)
+                            should_cancel=cancel_requested.is_set, formats=formats)
 
                     dialog = StatusDialog()
 

@@ -1,68 +1,91 @@
 <!DOCTYPE html>
-<html>
+<html lang="de">
 <head>
-<title>Rechnung Quartal {{quart}}, {{year}}</title>
-
-     <meta charset="utf-8">
-  <style type="text/css">a {text-decoration: none}#MAILSTYLE th {font-weight: normal;}#MAILSTYLE ul {list-style-type: disc; padding-inline-start: 40px; margin: 0px;}#MAILSTYLE ol {list-style-type: decimal; padding-inline-start: 40px; margin: 0px;}</style>
-
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<title>Abrechnung {{quart}}. Quartal {{year}}</title>
+<!--
+  Mail clients understand old HTML only: tables for layout, styles inline,
+  no web fonts. Keep it that way when editing.
+  The logo is attached to each mail by the app and referenced as cid:gei-logo.
+  #MAILSTYLE marks the 600px body; the app's send preview shows only that.
+-->
 </head>
-<body style="background-color:#eee;"><div class="moz-text-html" lang="x-unicode">
-<table style="background-color:#eee;" width="100%" height="80%" cellspacing="0" cellpadding="10" border="0">
-  <tbody><tr><td width="50%">&nbsp;</td><td align="center">
-      <table id="MAILSTYLE" style="empty-cells: show; width: 595px; border-collapse: collapse; background-color: white;" cellspacing="0" cellpadding="0" border="0">
-        <tbody><tr style="height:0" valign="top">
-          <td style="width:30px"></td>
-          <td style="width:2px"></td>
-          <td style="width:98px"></td>
-          <td style="width:440px"></td>
-          <td style="width:25px"></td>
-        </tr>
-        <tr style="height:20px" valign="top">
-          <td colspan="5" align="center">
-                          <p>
+<body style="margin:0; padding:0; background-color:#f4f1ec;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f4f1ec;">
+  <tr>
+    <td align="center" style="padding:24px 12px;">
 
-              </p>
+      <table id="MAILSTYLE" role="presentation" width="600" cellspacing="0" cellpadding="0" border="0"
+             style="width:600px; max-width:600px; background-color:#ffffff; border-radius:8px; border-collapse:separate;">
+
+        <!-- Logo -->
+        <tr>
+          <td style="padding:28px 40px 22px 40px;">
+            <img src="cid:gei-logo" width="171" height="56" alt="{{ community_name|trim }}"
+                 style="display:block; border:0; outline:none; text-decoration:none; width:171px; height:56px;">
           </td>
         </tr>
-        <tr style="height:20px" valign="top">
-          <td>
-          </td>
-          <td colspan="4" style="text-indent: 0px; text-align: left;">
-            Hallo {{name}}
-          </td>
-        </tr>
-        <tr style="height:10px" valign="top">
-          <td colspan="5">
-          </td>
-        </tr>
-        <tr style="height:20px" valign="top">
-          <td colspan="2">
-          </td>
-          <td colspan="2" style="text-indent: 0px; text-align: left;">
-            <p>
-                Anbei findest du deine Rechnung für das Quartal {{quart}}, {{year}}</p>
-            <p>Mit lieben Grüßen,</p>
-            <p>{{community_name}}</p></td>
-          <td>
-          </td>
-        </tr>
-        <tr valign="bottom">
-          <td colspan="5" align="center">
-            <p style="font-size:xx-small;">
-              {{community_name}} | Energiegemeinschaft
-                     Vereinsregisternummer {{community_companynumber}}    {{community_citycode}} {{community_city}}, {{community_street}} {{community_streetnr}}
-               {{community_mail}}        {{community_website}}
-      IBAN: {{community_IBAN}}
+
+        <!-- Greeting and text -->
+        <tr>
+          <td style="padding:30px 40px 6px 40px; border-top:3px solid #ff9f34; font-family:-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; color:#0c1112;">
+            <p style="margin:0 0 10px 0; font-size:12px; line-height:16px; letter-spacing:1.2px; text-transform:uppercase; font-weight:bold; color:#c2711a;">
+              Abrechnung {{quart}}. Quartal {{year}}
+            </p>
+            <p style="margin:0 0 18px 0; font-size:22px; line-height:28px; font-weight:bold; color:#0c1112;">
+              Hallo {{ name|trim }},
+            </p>
+            <p style="margin:0 0 14px 0; font-size:16px; line-height:24px;">
+              im Anhang findest du deine Abrechnung für das {{quart}}. Quartal {{year}} als PDF.
+            </p>
+            <p style="margin:0 0 14px 0; font-size:16px; line-height:24px;">
+              Darin stehen alle Positionen und Beträge &ndash; und dein Energieverlauf: wie viel Strom du
+              über unsere Energiegemeinschaft bezogen oder in sie eingespeist hast.
             </p>
           </td>
         </tr>
-      </tbody></table>
-    </td><td width="50%">&nbsp;</td></tr>
-</tbody></table>
 
+        <!-- Highlight box -->
+        <tr>
+          <td style="padding:10px 40px 8px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#fff3e2; border-left:4px solid #ff9f34; border-radius:4px;">
+              <tr>
+                <td style="padding:16px 20px; font-family:-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; font-size:15px; line-height:22px; color:#0c1112;">
+                  <strong>Fragen zur Abrechnung?</strong><br>
+                  Antworte einfach auf diese Mail oder schreib an
+                  <a href="mailto:{{ community_mail|trim }}" style="color:#c2711a; text-decoration:underline;">{{ community_mail|trim }}</a>.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
+        <!-- Sign-off -->
+        <tr>
+          <td style="padding:22px 40px 32px 40px; font-family:-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; font-size:16px; line-height:24px; color:#0c1112;">
+            Danke, dass du Teil unserer Energiegemeinschaft bist!<br><br>
+            Liebe Grüße<br>
+            <strong>{{ community_name|trim }}</strong>
+          </td>
+        </tr>
 
-</div></body></body>
+        <!-- Footer -->
+        <tr>
+          <td style="padding:20px 40px 24px 40px; background-color:#f8f6f2; border-radius:0 0 8px 8px; font-family:-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; font-size:12px; line-height:18px; color:#6b7680;">
+            <strong style="color:#0c1112;">{{ community_name|trim }}</strong> &middot; Energiegemeinschaft<br>
+            {{ community_street|trim }} {{ community_streetnr|trim }}, {{ community_citycode|trim }} {{ community_city|trim }}<br>
+            <a href="mailto:{{ community_mail|trim }}" style="color:#6b7680; text-decoration:underline;">{{ community_mail|trim }}</a>
+            &middot; <a href="{{ community_website|trim }}" style="color:#6b7680; text-decoration:underline;">{{ community_website|trim }}</a><br>
+            Vereinsregisternummer {{ community_companynumber|trim }} &middot; IBAN {{ community_IBAN|trim }}
+          </td>
+        </tr>
+
+      </table>
+
+    </td>
+  </tr>
+</table>
+</body>
 </html>
-

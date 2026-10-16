@@ -430,7 +430,7 @@ def format_unit_price(value):
 
 
 def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,savedirfp,callback,
-                              should_cancel=None):
+                              should_cancel=None, formats=("pdf",)):
     """Render and save one invoice per member.
 
     `callback(message, done, total)` drives the progress display.
@@ -778,9 +778,18 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
 
         print(f"Save invoice of {name} to {savedirfp}")
 
-        pdf, why = convert_to_pdf(savepathdocx, savedirfp)
-        if pdf is None:
-            problems.append(f"{name}: PDF-Erzeugung fehlgeschlagen - nur die .docx wurde gespeichert. "
-                            f"{why}")
+        # formats: "pdf", "docx" or both. The .docx is always written first,
+        # since the PDF is converted from it; it is removed afterwards only if
+        # PDF alone was asked for and the PDF exists.
+        if "pdf" in formats:
+            pdf, why = convert_to_pdf(savepathdocx, savedirfp)
+            if pdf is None:
+                problems.append(f"{name}: PDF-Erzeugung fehlgeschlagen - nur die .docx wurde gespeichert. "
+                                f"{why}")
+            elif "docx" not in formats:
+                try:
+                    os.remove(savepathdocx)
+                except OSError as e:
+                    print(f"Could not remove {savepathdocx}: {e}")
 
     return problems

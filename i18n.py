@@ -592,4 +592,12 @@ EN = {
         '{mails} selected',
     '{skipped} ohne PDF-Rechnung':
         '{skipped} without a PDF invoice',
+    'PDF':
+        'PDF',
+    'Word (.docx)':
+        'Word (.docx)',
+    'PDF und Word (.docx)':
+        'PDF and Word (.docx)',
+    'In welchem Format sollen die Rechnungen gespeichert werden?':
+        'Which format should the invoices be saved in?',
 }
