@@ -100,3 +100,14 @@ def test_self_payers_are_not_debited_and_their_debt_reduces_their_credit(monkeyp
     debit, transfer, _ = produce_sepa_export_dfs(pd.DataFrame(rows), "GEI")
     assert list(debit["Zahlungspflichtiger Name"]) == ["Peter"]
     assert list(transfer["Empfänger Name"]) == ["Anna"] and list(transfer["Betrag in EUR"]) == ["7,00"]
+
+
+def test_one_person_with_two_memberships_pays_from_each_account(monkeypatch):
+    """Hubert: two memberships, two accounts. Merged by name, both amounts left one account."""
+    monkeypatch.setattr(exporting.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: exporting.QMessageBox.No))
+    first, second = sepa_row("Hubert", "Rechnung", 9.94), sepa_row("Hubert", "Rechnung", 11.22)
+    first["Empfänger Konto IBAN"], second["Empfänger Konto IBAN"] = "AT611904300234573201", "DE89370400440532013000"
+    debit, transfer, _ = produce_sepa_export_dfs(pd.DataFrame([first, second]), "GEI")
+    assert sorted(zip(debit["Zahlungspflichtiger IBAN"], debit["Betrag in EUR"])) == [
+        ("AT611904300234573201", "9,94"), ("DE89370400440532013000", "11,22")]

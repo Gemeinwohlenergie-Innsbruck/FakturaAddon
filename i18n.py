@@ -570,4 +570,6 @@ EN = {
         'pays by transfer',
     '{n} Mitgliedsnummer(n) sind in den Stammdaten mehreren Personen zugeordnet - bitte in EEG Faktura korrigieren.':
         '{n} member number(s) belong to more than one person in the member data - please correct in EEG Faktura.',
+    '{n} Name(n) gehören zu mehreren Mitgliedschaften mit eigenem Konto. Sie bekommen getrennte Rechnungen und Zahlungen - bitte kurz prüfen, ob das stimmt.':
+        '{n} name(s) belong to several memberships with their own account. They get separate invoices and payments - please check that this is intended.',
 }

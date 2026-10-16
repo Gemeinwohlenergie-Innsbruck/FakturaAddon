@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from selection import select_invoice_positions
+from selection import select_invoice_positions, members_with_invoices
 
 
 @pytest.fixture
@@ -176,3 +176,19 @@ def test_invoice_file_names_have_no_nan_and_no_slashes():
     assert invoice_file_stem("2026", "3", "Anna ", " Müller") == "Rechnung_2026_q3_Anna_Müller"
     assert invoice_file_stem("2026", "3", "Sonnenstrom GmbH", float("nan")) == "Rechnung_2026_q3_Sonnenstrom GmbH"
     assert invoice_file_stem("2026", "3", "Verein A/B", None) == "Rechnung_2026_q3_Verein A-B"
+
+
+def test_each_membership_of_one_person_is_its_own_mail_recipient():
+    master = pd.DataFrame({"Mit. Nr.": [42, 43, 44], "Name 1": ["Hubert", "Hubert Hammerle", "Hubert"],
+                           "Name 2": ["Hammerle", float("nan"), "Hammerle"],
+                           "E-Mail": ["h@a.at", "h@b.at", "other@c.at"]})
+    details = pd.DataFrame({"Empfänger Vorame": ["Hubert", "Hubert Hammerle"],
+                            "Empfänger Nachname": ["Hammerle", float("nan")],
+                            "Empfänger Mitgliedsnummer": [42, 43]})
+    result = members_with_invoices(master, details)
+    assert sorted(result["Mit. Nr."]) == [42, 43]            # 44 has no invoice
+
+
+def test_file_names_carry_the_member_number():
+    from selection import invoice_file_stem
+    assert invoice_file_stem("2026", "3", "Hubert", "Hammerle", 42.0) == "Rechnung_2026_q3_Hubert_Hammerle_42"

@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import pandas as pd
 import datetime as dt
@@ -9,7 +10,7 @@ from io import BytesIO
 from PyQt5.QtWidgets import QMessageBox
 
 from i18n import tr
-from selection import invoice_file_stem
+from selection import invoice_file_stem, person_keys
 
 
 # matplotlib and docx2pdf are imported on first use, not at module import.
@@ -67,7 +68,7 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
     # what they owe still reduces a credit note when positions are merged.
     if "Empfänger Einzugsart" in debit.columns:
         self_pay = debit["Empfänger Einzugsart"].astype(str).str.strip().str.upper() == "NONE"
-        owed_by_self_payers = debit[self_pay].groupby("Empfänger Name")["Pos. Bruttobetrag"].sum()
+        owed_by_self_payers = debit[self_pay].groupby(["Empfänger Name", "Empfänger Konto IBAN"])["Pos. Bruttobetrag"].sum()
         debit = debit[~self_pay]
     else:
         owed_by_self_payers = pd.Series(dtype=float)
@@ -200,12 +201,15 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
             grouped_df = df.groupby(group_cols, as_index=False).agg(agg_dict)
 
             return grouped_df
+        # Per person AND account: one person can hold two memberships with
+        # two accounts, and merging by name alone moved both amounts through
+        # the first account.
         if debitexport is not None:
-            debitexport = group_and_aggregate(debitexport,["Zahlungspflichtiger Name"],['Betrag in EUR'])
+            debitexport = group_and_aggregate(debitexport,["Zahlungspflichtiger Name", "Zahlungspflichtiger IBAN"],['Betrag in EUR'])
         if transferexport is not None:
-            transferexport = group_and_aggregate(transferexport,["Empfänger Name"],['Betrag in EUR'])
-            for name, owed in owed_by_self_payers.items():
-                here = transferexport['Empfänger Name'] == name
+            transferexport = group_and_aggregate(transferexport,["Empfänger Name", "Empfänger IBAN"],['Betrag in EUR'])
+            for (name, iban), owed in owed_by_self_payers.items():
+                here = (transferexport['Empfänger Name'] == name) & (transferexport['Empfänger IBAN'] == iban)
                 if here.any():
                     remaining = round(transferexport.loc[here, 'Betrag in EUR'].values[0] - owed, 2)
                     if remaining > 0:
@@ -218,25 +222,29 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
                 transferexport = None
 
         if (debitexport is not None) and (transferexport is not None):
-            doubles_names = debitexport[debitexport['Zahlungspflichtiger Name'].isin(transferexport['Empfänger Name'])]['Zahlungspflichtiger Name']
-            for double_name in doubles_names:
-                print(double_name)
-                diff = round(debitexport.loc[debitexport['Zahlungspflichtiger Name'] == double_name, 'Betrag in EUR'].values[0] -transferexport.loc[transferexport['Empfänger Name'] == double_name, 'Betrag in EUR'].values[0], 2)
+            pairs = list(zip(debitexport['Zahlungspflichtiger Name'], debitexport['Zahlungspflichtiger IBAN']))
+            for double_name, iban in pairs:
+                in_debit = (debitexport['Zahlungspflichtiger Name'] == double_name) & (debitexport['Zahlungspflichtiger IBAN'] == iban)
+                in_transfer = (transferexport['Empfänger Name'] == double_name) & (transferexport['Empfänger IBAN'] == iban)
+                if not in_debit.any() or not in_transfer.any():
+                    continue
+                diff = round(debitexport.loc[in_debit, 'Betrag in EUR'].values[0] - transferexport.loc[in_transfer, 'Betrag in EUR'].values[0], 2)
                 # if diff > 0  --> more debit than transfer
                 if diff == 0:
                     # Debit and credit cancel out. Before, this fell through
                     # to the credit branch and wrote a 0,00 transfer.
-                    debitexport = debitexport.loc[~(debitexport['Zahlungspflichtiger Name'] == double_name),:].reset_index(drop=True)
-                    transferexport = transferexport.loc[~(transferexport['Empfänger Name'] == double_name),:].reset_index(drop=True)
+                    debitexport = debitexport.loc[~in_debit,:].reset_index(drop=True)
+                    transferexport = transferexport.loc[~in_transfer,:].reset_index(drop=True)
                 elif diff > 0:
-                    print("We have more debit than transfer")
-                    debitexport.loc[debitexport['Zahlungspflichtiger Name'] == double_name, 'Betrag in EUR'] = diff
-                    transferexport = transferexport.loc[~(transferexport['Empfänger Name'] == double_name),:].reset_index(drop=True)
-
+                    debitexport.loc[in_debit, 'Betrag in EUR'] = diff
+                    transferexport = transferexport.loc[~in_transfer,:].reset_index(drop=True)
                 else:
-                    print("We have more transfer than debit")
-                    transferexport.loc[transferexport['Empfänger Name'] == double_name, 'Betrag in EUR'] = -diff
-                    debitexport = debitexport.loc[~(debitexport['Zahlungspflichtiger Name'] == double_name),:].reset_index(drop=True)
+                    transferexport.loc[in_transfer, 'Betrag in EUR'] = -diff
+                    debitexport = debitexport.loc[~in_debit,:].reset_index(drop=True)
+            if transferexport.empty:
+                transferexport = None
+            if debitexport.empty:
+                debitexport = None
 
 
 
@@ -438,8 +446,13 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
     debit,transfer, doublesprocess = check_doubles(invoicedata)
     # debit, transfer = debit[cols_for_tbl], transfer[cols_for_tbl]
     energydata.index = pd.to_datetime(energydata.index, format="%d.%m.%Y %H:%M:%S")
-    nr_all_persons = invoicedata["Empfänger Name"].unique().shape[0]
-    for index,name in enumerate(invoicedata["Empfänger Name"].unique()):
+    # One invoice per membership (member number and name), not per name: one
+    # person with two memberships has two invoices, addresses and accounts.
+    who = person_keys(invoicedata)
+    people = list(dict.fromkeys(who))
+    nr_all_persons = len(people)
+    for index, person in enumerate(people):
+        name = invoicedata.loc[who == person, "Empfänger Name"].iloc[0]
     # for index, name in enumerate(["Gerhard Halder"]):
         if should_cancel is not None and should_cancel():
             problems.append(f"Abgebrochen nach {index} von {nr_all_persons} Rechnungen.")
@@ -447,9 +460,9 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         print(f"({index+1}/{nr_all_persons}) Make invoice for {name}")
         callback(tr("({done}/{total}) Rechnung für {name}...",
                     done=index + 1, total=nr_all_persons, name=name), index, nr_all_persons)
-        invoicethis = invoicedata[invoicedata["Empfänger Name"] == name]
-        debits_this =  debit[debit["Empfänger Name"] == name]
-        transfers_this = transfer[transfer["Empfänger Name"] == name]
+        invoicethis = invoicedata[who == person]
+        debits_this = debit[debit.index.isin(invoicethis.index)]
+        transfers_this = transfer[transfer.index.isin(invoicethis.index)]
         total_transfer_debit, all_position_for_tbl = net_member_positions(debits_this, transfers_this)
         postext =  all_position_for_tbl.copy()
         postext.loc[postext['Pos. Text'].str.contains('Mitgliedsgebuer'),'Pos. Text'] = ''
@@ -527,7 +540,20 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         axs[0].set_xticklabels([])
         # prepare data for plot
         # check whether the energy direction is always the same
-        name_new = resolve_name_in_energydata(energydata, name)
+        # Charts from the meters billed on this invoice. By name alone, a
+        # second membership of the same person showed the first one's meters.
+        billed = [m for m in dict.fromkeys(
+                      re.findall(r"AT[0-9A-Z]{31}", " ".join(invoicethis["Pos. Text"].astype(str))))
+                  if m in set(energydata.columns.get_level_values(0))]
+        name_new = None
+        if billed:
+            holders = list(dict.fromkeys(energydata.loc[:, energydata.columns.get_level_values(0).isin(billed)]
+                                         .columns.get_level_values(1)))
+            resolved = resolve_name_in_energydata(
+                energydata.loc[:, energydata.columns.get_level_values(0).isin(billed)], name)
+            name_new = resolved if resolved is not None else holders[0]
+        if name_new is None:
+            name_new = resolve_name_in_energydata(energydata, name)
         if name_new is None:
             # Was `return None`, which abandoned the whole batch *and* skipped
             # the completion signal, hanging the app. Skip this member instead.
@@ -540,8 +566,11 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
 
         name = name_new
 
-        energydirections = energydata.xs(name, level="Name", axis=1).columns.get_level_values(level="Energy direction")
-        meteringpointids = energydata.xs(name, level="Name", axis=1).columns.get_level_values(level="MeteringpointID")
+        own = energydata.xs(name, level="Name", axis=1)
+        if billed:
+            own = own.loc[:, own.columns.get_level_values("MeteringpointID").isin(billed)]
+        energydirections = own.columns.get_level_values(level="Energy direction")
+        meteringpointids = own.columns.get_level_values(level="MeteringpointID")
         hatches = ['', '/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*']
         edgecolors = ['none', 'black', 'green', 'red']
         hatches_this_person = [x for x, y in zip(hatches, range(0, meteringpointids.unique().shape[
@@ -634,7 +663,7 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
             the *previous member*, so a failed lookup silently drew somebody
             else's energy data onto this member's invoice.
             """
-            mp = slice(None) if meteringpointid is None else meteringpointid
+            mp = list(meteringpointids.unique()) if meteringpointid is None else meteringpointid
             aggregated = meteringpointid is None
             zp = "" if aggregated else f" ZP {meteringpointid[-6:]}"
             try:
@@ -736,7 +765,9 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
 
         #save
         namefile = invoice_file_stem(year, quart, invoicethis["Empfänger Vorame"].iloc[0],
-                                     invoicethis["Empfänger Nachname"].iloc[0])
+                                     invoicethis["Empfänger Nachname"].iloc[0],
+                                     invoicethis["Empfänger Mitgliedsnummer"].iloc[0]
+                                     if "Empfänger Mitgliedsnummer" in invoicethis else None)
         savepathdocx = os.path.join(savedirfp, f"{namefile}.docx")
         print(f"Save invoice of {name} to {savepathdocx}")
         invoicetemplate.save(savepathdocx)

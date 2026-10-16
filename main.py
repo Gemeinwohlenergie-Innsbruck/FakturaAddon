@@ -1890,7 +1890,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         display = " ".join(str(x) for x in (person_data['Name 1'], person_data['Name 2'])
                                            if not pd.isna(x)).strip()
                         nameinvoicefile = invoice_file_stem(self.thisinvoices_year, self.thisinvoice_quart,
-                                                            person_data['Name 1'], person_data['Name 2']) + ".pdf"
+                                                            person_data['Name 1'], person_data['Name 2'],
+                                                            person_data.get('Mit. Nr.')) + ".pdf"
                         fpinvoicefile = os.path.join(self.safepath_this_invoices, nameinvoicefile)
                         if os.path.exists(fpinvoicefile):
                             jobs.append((person_data, fpinvoicefile))
@@ -1952,7 +1953,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             sent.append(person_data["E-Mail"])
                             for number in documents_of_member(self.invoices.data["list"],
                                                               person_data["Name 1"],
-                                                              person_data["Name 2"]):
+                                                              person_data["Name 2"],
+                                                              person_data.get("Mit. Nr.")):
                                 delivered[number] = None
                         except Exception as e:
                             # One bad address must not abort a run that has

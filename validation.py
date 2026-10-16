@@ -240,10 +240,9 @@ def check_mandates(invoice_details):
 
 
 def check_duplicate_names(invoice_details):
-    """Two members with the same full name get merged into one payment.
-
-    produce_sepa_export_dfs groups by name, so the second member's positions
-    are paid to the first member's IBAN.
+    """One name with more than one account: usually one person with two
+    memberships. Invoices and payments are kept apart per member number and
+    account; this only asks the operator to confirm it is intended.
     """
     if not _has(invoice_details, "Empfänger Name", "Empfänger Konto IBAN"):
         return []
@@ -252,9 +251,10 @@ def check_duplicate_names(invoice_details):
     if not clashes:
         return []
     return [Finding(
-        ERROR, tr("Doppelte Namen"),
-        tr("{n} Name(n) kommen mit mehr als einer IBAN vor. Der SEPA-Export fasst nach Namen "
-           "zusammen, diese Zahlungen gingen auf ein einziges Konto.", n=len(clashes)),
+        INFO, tr("Doppelte Namen"),
+        tr("{n} Name(n) gehören zu mehreren Mitgliedschaften mit eigenem Konto. Sie bekommen "
+           "getrennte Rechnungen und Zahlungen - bitte kurz prüfen, ob das stimmt.",
+           n=len(clashes)),
         clashes, names=clashes)]
 
 

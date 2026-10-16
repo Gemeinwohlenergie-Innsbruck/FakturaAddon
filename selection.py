@@ -118,30 +118,54 @@ def members_with_invoices(masterdata, invoice_details,
     first name with one invoice recipient and a surname with another, so
     members with no invoice were queued to receive somebody else's mail.
     """
-    invoice_pairs = {
-        _name_key(first, last)
-        for first, last in zip(invoice_details[invoice_first],
-                               invoice_details[invoice_last])
-    }
-    mask = [
-        _name_key(first, last) in invoice_pairs
-        for first, last in zip(masterdata[master_first], masterdata[master_last])
-    ]
-    columns = [master_first, master_last, "E-Mail"]
+    invoice_pairs = {}
+    numbers = (invoice_details["Empfänger Mitgliedsnummer"]
+               if "Empfänger Mitgliedsnummer" in invoice_details else [None] * len(invoice_details))
+    for first, last, number in zip(invoice_details[invoice_first],
+                                   invoice_details[invoice_last], numbers):
+        invoice_pairs.setdefault(_name_key(first, last), set()).add(_document_key(number))
+    has_numbers = "Mit. Nr." in masterdata.columns
+    mask = []
+    for _, row in masterdata.iterrows():
+        pair = _name_key(row[master_first], row[master_last])
+        wanted = invoice_pairs.get(pair)
+        if wanted is None:
+            mask.append(False)
+        elif has_numbers and wanted - {""}:
+            # Same name, other membership: only the one with an invoice.
+            mask.append(_document_key(row["Mit. Nr."]) in wanted)
+        else:
+            mask.append(True)
+    columns = [master_first, master_last, "E-Mail"] + (["Mit. Nr."] if has_numbers else [])
     return masterdata.loc[mask, columns].drop_duplicates()
 
 
-def documents_of_member(invoice_list, first, last,
+def documents_of_member(invoice_list, first, last, member=None,
                         invoice_first="Empfänger Vorame", invoice_last="Empfänger Nachname"):
-    """Document numbers of the member with this (first, last) name pair."""
+    """Document ids of the member with this name pair (and member number, if given)."""
     if "Nummer" not in invoice_list.columns:
         return []
     wanted = _name_key(first, last)
+    member = _document_key(member)
     return [document_id(row) for _, row in invoice_list.iterrows()
-            if _name_key(row[invoice_first], row[invoice_last]) == wanted]
+            if _name_key(row[invoice_first], row[invoice_last]) == wanted
+            and (not member or _document_key(row.get("Empfänger Mitgliedsnummer")) == member)]
 
 
-def invoice_file_stem(year, quarter, first, last):
+def person_keys(frame, member_column="Empfänger Mitgliedsnummer", name_column="Empfänger Name"):
+    """(member number, name) per row: who a document belongs to.
+
+    The name alone is not enough: one person can hold two memberships, with
+    two addresses and two accounts, and each has its own invoice. Grouping
+    by name merged them into one PDF and one payment from one account.
+    """
+    members = (frame[member_column].map(_document_key) if member_column in frame
+               else pd.Series([""] * len(frame), index=frame.index))
+    names = frame[name_column].map(lambda n: " ".join(str(n).split()))
+    return pd.Series(list(zip(members, names)), index=frame.index, dtype=object)
+
+
+def invoice_file_stem(year, quarter, first, last, member=None):
     """"Rechnung_2026_q3_Anna_Müller" - shared by the invoice run and the mail run.
 
     Both used to build it themselves, and a member with no surname (a
@@ -153,4 +177,7 @@ def invoice_file_stem(year, quarter, first, last):
     parts = [_document_key(part) for part in (first, last)]
     name = "_".join(" ".join(p.split()) for p in parts if p)
     name = re.sub(r'[\\/:*?"<>|]+', "-", name) or "ohne_Name"
-    return f"Rechnung_{year}_q{quarter}_{name}"
+    # The member number keeps two memberships of one person apart; without it
+    # the second invoice overwrote the first.
+    member = _document_key(member)
+    return f"Rechnung_{year}_q{quarter}_{name}" + (f"_{member}" if member else "")
