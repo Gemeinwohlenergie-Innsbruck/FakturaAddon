@@ -17,7 +17,7 @@ import sys
 from PyQt5.QtWidgets import QLabel, QFileDialog, QMessageBox, QGridLayout, QTableWidget, QTableWidgetItem, QListWidget, QWidget, QListWidgetItem, QCheckBox, QListWidgetItem, QPushButton, QVBoxLayout, QDialog
 from importing import invoices,emails, masterdata,energydata,load_filepath, check_whether_data_exists, newmember, LoginDialog, SettingsDialog, FetchEnergyDialog, run_in_background
 import eegfaktura_api
-from tables import DataFrameTable
+from tables import DataFrameTable, SortableItem
 from help import HelpDialog
 import ledger
 import review
@@ -325,27 +325,6 @@ class AcceptErrorsDialog(QDialog):
 
     def update_ok(self):
         self.ok.setEnabled(self.confirm.isChecked() and bool(self.reason.text().strip()))
-
-
-class SortableItem(QTableWidgetItem):
-    """Sorts by a key set with set_key: numbers as numbers, blanks last."""
-
-    KEY_ROLE = Qt.UserRole + 1
-
-    def set_key(self, value):
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            key = (2, 0.0, "")
-        elif isinstance(value, (int, float, Decimal)):
-            key = (0, float(value), "")
-        else:
-            key = (1, 0.0, str(value).casefold())
-        self.setData(self.KEY_ROLE, key)
-
-    def __lt__(self, other):
-        mine, theirs = self.data(self.KEY_ROLE), other.data(self.KEY_ROLE)
-        if mine is None or theirs is None:
-            return super().__lt__(other)
-        return tuple(mine) < tuple(theirs)
 
 
 class ReviewDialog(QDialog):
@@ -1917,17 +1896,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     return
                 logged_in = try_logging_in_f(self.config.get("my_mail", ""), self.config.get("my_mail_pw", ""), self.config.get("imap_server", ""))
                 if logged_in:
-                    mailadressselection = MailAdressSelection(personswithinvoicesmasterdata["E-Mail"], title="Wähle die Personen aus, denen du eine Mail schreiben willst")
-                    # Early returns: these values used to be assigned only inside
-                    # the accepted branch, so cancelling raised UnboundLocalError.
-                    if not mailadressselection.exec_():
-                        print("Dialog canceled")
-                        return
-                    selected_persons = mailadressselection.result
-                    personswithinvoicesselected = personswithinvoicesmasterdata.loc[selected_persons,:]
-                    if personswithinvoicesselected.empty:
-                        QMessageBox.information(self, tr("Keine Auswahl"), tr("Es wurde niemand ausgewählt."))
-                        return
+                    # Recipients are chosen in the send preview itself (tick boxes),
+                    # no longer in a separate list beforehand.
+                    personswithinvoicesselected = personswithinvoicesmasterdata
 
                     if not self.safepath_this_invoices:
                         self.safepath_this_invoices = load_filepath(self, tr("In welchem Ordner sind die ganzen Rechnungen gespeichert?"), pathisdir=True,homedir= self.home_directory)
@@ -1960,16 +1931,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
                     # Test mode (Einstellungen): every mail to one address.
                     test_recipient = self.config.get("test_mail", "").strip() or None
-                    jobs_by_address = {person_data["E-Mail"]: (person_data, path)
-                                       for person_data, path in jobs}
-
-                    def build_preview(address):
+                    def build_preview(index):
                         """Compose the real message and pull its subject, HTML and attachment.
 
                         Built by build_invoice_email, the same function the send
                         uses, so the preview cannot drift from what goes out.
                         """
-                        person_data, path = jobs_by_address[address]
+                        person_data, path = jobs[index]
+                        address = person_data["E-Mail"]
                         message = build_invoice_email(
                             self.config.get("my_mail", ""), self.config.get("EEG_name", ""),
                             address, person_data["Name 1"],
@@ -1987,6 +1956,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     if not preview.exec_() or not preview.result:
                         print("Send cancelled in the preview dialog")
                         return
+                    # Only the ticked ones; the unticked are neither sent nor
+                    # reported as skipped.
+                    jobs = [jobs[i] for i in preview.selected_jobs]
 
                     # Falls back to the IMAP host and 587, which is what the
                     # app assumed before there were SMTP settings at all.

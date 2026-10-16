@@ -8,11 +8,12 @@ be shown; a proxy on top does the sorting and filtering.
 
 import datetime as dt
 import math
+from decimal import Decimal
 
 import pandas as pd
 from PyQt5.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
 from PyQt5.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                             QTableView, QVBoxLayout, QWidget)
+                             QTableView, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from i18n import tr
 
@@ -161,3 +162,24 @@ class DataFrameTable(QWidget):
         shown, total = self.proxy.rowCount(), self.model.rowCount()
         self.count.setText(tr("{shown} von {total} Zeilen", shown=shown, total=total)
                            if shown != total else tr("{total} Zeilen", total=total))
+
+
+class SortableItem(QTableWidgetItem):
+    """Sorts by a key set with set_key: numbers as numbers, blanks last."""
+
+    KEY_ROLE = Qt.UserRole + 1
+
+    def set_key(self, value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            key = (2, 0.0, "")
+        elif isinstance(value, (int, float, Decimal)):
+            key = (0, float(value), "")
+        else:
+            key = (1, 0.0, str(value).casefold())
+        self.setData(self.KEY_ROLE, key)
+
+    def __lt__(self, other):
+        mine, theirs = self.data(self.KEY_ROLE), other.data(self.KEY_ROLE)
+        if mine is None or theirs is None:
+            return super().__lt__(other)
+        return tuple(mine) < tuple(theirs)

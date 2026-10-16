@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton,
                              QLabel, QScrollArea, QTextEdit, QTextBrowser, QFormLayout,
                              QLineEdit, QGridLayout, QCheckBox, QDialog, QSplitter,
-                             QTableWidget, QTableWidgetItem, QAbstractItemView)
+                             QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QBrush, QColor
 import email
@@ -18,6 +18,7 @@ import imaplib
 from datetime import datetime
 
 from i18n import tr
+from tables import SortableItem
 
 
 class MailSelection(QWidget):
@@ -507,43 +508,37 @@ def send_mail_to_one_person(sender_email,password,host,sender_name, receiver_ema
 
 
 class SendPreviewDialog(QDialog):
-    """Approve a mail run by looking at the actual mails.
+    """Choose recipients and approve the mail run, on one screen.
 
-    Replaces a dialog that showed a list of addresses and a Ja/Nein button.
-    For an irreversible action that reaches members, seeing the rendered mail,
-    its subject and the attachment it will carry is the point.
+    Every member with an invoice is listed with a tick box (all ticked to
+    start); selecting a row shows that exact mail - subject, body and
+    attachment - built by the same code that sends it. This replaces a
+    separate address list followed by this preview, which asked the same
+    question twice. The table can be filtered and sorted; nothing is sent
+    until the send button, which counts the ticked mails.
     """
 
     # The invoice mail template is designed at 595px plus padding.
     MAIL_WIDTH = 660
+    JOB, MISSING = "job", "missing"
 
     def __init__(self, jobs, missing, build_preview, parent=None, test_recipient=None):
         """
-        jobs:    [(display_name, address, attachment_path), ...] - will be sent
+        jobs:    [(display_name, address, attachment_path), ...] - can be sent
         missing: [(display_name, address, expected_filename), ...] - no PDF found
-        build_preview: address -> (subject, html_body, attachment_name)
+        build_preview: job index -> (subject, html_body, attachment_name)
         """
         super().__init__(parent)
         self.setWindowTitle(tr("Rechnungen verschicken"))
-        self.resize(1160, 680)
+        self.resize(1200, 700)
         self.jobs = jobs
         self.missing = missing
         self.build_preview = build_preview
+        self.test_recipient = test_recipient
         self.result = False
+        self.selected_jobs = []
 
         layout = QVBoxLayout(self)
-
-        def plural(n):
-            return tr("1 Mail") if n == 1 else tr("{n} Mails", n=n)
-
-        summary = QLabel()
-        if missing:
-            summary.setText(tr("{mails} werden verschickt · {skipped} übersprungen "
-                               "(keine PDF-Rechnung gefunden)",
-                               mails=plural(len(jobs)), skipped=len(missing)))
-        else:
-            summary.setText(tr("{mails} werden verschickt", mails=plural(len(jobs))))
-        summary.setStyleSheet("font-weight: 600; padding: 4px;")
         if test_recipient:
             banner = QLabel(tr("TESTMODUS - alle Mails gehen an {address}, keine an die "
                                "Mitglieder. Ausschalten in den Einstellungen.",
@@ -552,27 +547,48 @@ class SendPreviewDialog(QDialog):
             banner.setStyleSheet("background: #ff9f34; color: #0c1112; font-weight: 600; "
                                  "padding: 8px; border-radius: 4px;")
             layout.addWidget(banner)
-        layout.addWidget(summary)
+        self.summary = QLabel()
+        self.summary.setStyleSheet("font-weight: 600; padding: 4px;")
+        layout.addWidget(self.summary)
+
+        bar = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(tr("Filtern… (Name, Mailadresse, Datei)"))
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.apply_filter)
+        bar.addWidget(self.search, 1)
+        tick_all = QPushButton(tr("Alle auswählen"))
+        tick_all.clicked.connect(lambda: self.set_all(True))
+        tick_none = QPushButton(tr("Keine"))
+        tick_none.clicked.connect(lambda: self.set_all(False))
+        bar.addWidget(tick_all)
+        bar.addWidget(tick_none)
+        layout.addLayout(bar)
 
         splitter = QSplitter(Qt.Horizontal)
-
-        self.table = QTableWidget(len(jobs) + len(missing), 3)
-        self.table.setHorizontalHeaderLabels([tr("Empfänger:in"), tr("Mailadresse"), tr("Rechnung")])
+        self.table = QTableWidget(len(jobs) + len(missing), 4)
+        self.table.setHorizontalHeaderLabels(["✓", tr("Empfänger:in"), tr("Mailadresse"), tr("Rechnung")])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         for row, (name, address, path) in enumerate(jobs):
-            self._set_row(row, name, address, tr("✓ Rechnung gefunden"),
+            self._set_row(row, (self.JOB, row), name, address, tr("✓ Rechnung gefunden"),
                           sendable=True, tooltip=os.path.basename(path))
         for offset, (name, address, expected) in enumerate(missing):
-            self._set_row(len(jobs) + offset, name, address, tr("✗ keine Rechnung"),
-                          sendable=False, tooltip=tr("{file} nicht gefunden", file=expected))
+            self._set_row(len(jobs) + offset, (self.MISSING, offset), name, address,
+                          tr("✗ keine Rechnung"), sendable=False,
+                          tooltip=tr("{file} nicht gefunden", file=expected))
         self.table.resizeColumnsToContents()
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
         # Without this the attachment column is clipped by the splitter.
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setMinimumWidth(420)
+        header.setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(-1, Qt.AscendingOrder)
+        self.table.setMinimumWidth(460)
         self.table.itemSelectionChanged.connect(self.show_selected)
+        self.table.itemChanged.connect(lambda *_: self.update_counts())
         splitter.addWidget(self.table)
 
         right = QWidget()
@@ -592,49 +608,100 @@ class SendPreviewDialog(QDialog):
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 5)
-        splitter.setSizes([480, 700])
+        splitter.setSizes([520, 680])
         layout.addWidget(splitter, 1)
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         cancel = QPushButton(tr("Abbrechen"))
         cancel.clicked.connect(self.reject)
-        self.send_button = QPushButton(
-            tr("{mails} an die Testadresse verschicken", mails=plural(len(jobs))) if test_recipient
-            else tr("{mails} verschicken", mails=plural(len(jobs))))
+        self.send_button = QPushButton()
         self.send_button.setObjectName("primaryButton")
         self.send_button.setDefault(True)
-        self.send_button.setEnabled(bool(jobs))
         self.send_button.clicked.connect(self.confirm)
         buttons.addWidget(cancel)
         buttons.addWidget(self.send_button)
         layout.addLayout(buttons)
 
+        self.update_counts()
         if jobs:
             self.table.selectRow(0)
 
-    def _set_row(self, row, name, address, status, sendable, tooltip=""):
-        for column, text in enumerate((str(name), str(address), status)):
-            item = QTableWidgetItem(text)
+    @staticmethod
+    def plural(n):
+        return tr("1 Mail") if n == 1 else tr("{n} Mails", n=n)
+
+    def _set_row(self, row, key, name, address, status, sendable, tooltip=""):
+        tick = SortableItem()
+        tick.setData(Qt.UserRole, key)
+        if sendable:
+            tick.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            tick.setCheckState(Qt.Checked)
+        else:
+            tick.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        tick.set_key(0 if sendable else 1)
+        self.table.setItem(row, 0, tick)
+        for column, text in enumerate((str(name), str(address), status), start=1):
+            item = SortableItem(text)
+            item.set_key(text)
             if not sendable:
                 item.setForeground(QBrush(QColor("#a33")))
             if tooltip:
                 item.setToolTip(tooltip)
             self.table.setItem(row, column, item)
 
+    def row_key(self, row):
+        item = self.table.item(row, 0)
+        return item.data(Qt.UserRole) if item is not None else None
+
+    def ticked_jobs(self):
+        found = []
+        for row in range(self.table.rowCount()):
+            kind, index = self.row_key(row)
+            if kind == self.JOB and self.table.item(row, 0).checkState() == Qt.Checked:
+                found.append(index)
+        return sorted(found)
+
+    def update_counts(self):
+        n = len(self.ticked_jobs())
+        parts = [tr("{mails} ausgewählt", mails=self.plural(n)) + f" ({len(self.jobs)})"]
+        if self.missing:
+            parts.append(tr("{skipped} ohne PDF-Rechnung", skipped=len(self.missing)))
+        self.summary.setText(" · ".join(parts))
+        self.send_button.setText(
+            tr("{mails} an die Testadresse verschicken", mails=self.plural(n)) if self.test_recipient
+            else tr("{mails} verschicken", mails=self.plural(n)))
+        self.send_button.setEnabled(n > 0)
+
+    def set_all(self, checked):
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            kind, _ = self.row_key(row)
+            if kind == self.JOB and not self.table.isRowHidden(row):
+                self.table.item(row, 0).setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        self.table.blockSignals(False)
+        self.update_counts()
+
+    def apply_filter(self, text):
+        needle = text.strip().casefold()
+        for row in range(self.table.rowCount()):
+            haystack = " ".join(self.table.item(row, c).text() + " " + (self.table.item(row, c).toolTip() or "")
+                                for c in range(1, self.table.columnCount())).casefold()
+            self.table.setRowHidden(row, bool(needle) and needle not in haystack)
+
     def show_selected(self):
         row = self.table.currentRow()
-        if row < 0 or row >= len(self.jobs):
+        key = self.row_key(row) if row >= 0 else None
+        if key is None or key[0] != self.JOB:
             # A skipped recipient has no mail to preview.
             self.subject_label.setText("")
             self.attachment_label.setText(
                 tr("Für diese Person wurde keine PDF-Rechnung gefunden - "
-                   "es wird nichts verschickt."))
+                   "es wird nichts verschickt.") if key else "")
             self._show_html("")
             return
-        address = self.jobs[row][1]
         try:
-            subject, html, attachment = self.build_preview(address)
+            subject, html, attachment = self.build_preview(key[1])
         except Exception as e:
             self.subject_label.setText(tr("Vorschau nicht möglich"))
             self.attachment_label.setText(str(e))
@@ -686,7 +753,8 @@ class SendPreviewDialog(QDialog):
                 max(self.MAIL_WIDTH, self.body_view.viewport().width()))
 
     def confirm(self):
-        self.result = True
+        self.selected_jobs = self.ticked_jobs()
+        self.result = bool(self.selected_jobs)
         self.accept()
 
 

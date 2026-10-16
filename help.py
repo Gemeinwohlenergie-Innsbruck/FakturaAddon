@@ -57,8 +57,8 @@ und in der Breite ziehen.</p>
 <ol>
 <li><b>Rechnungen erstellen</b> &ndash; Ordner wählen; eine PDF pro Mitgliedschaft. Braucht Word oder LibreOffice
  (LibreOffice dabei geschlossen lassen). Die erste PDF kurz ansehen.</li>
-<li><b>Rechnungen verschicken</b> &ndash; Empfänger:innen auswählen, dann zeigt die Vorschau jede Mail.
- Erst <i>… Mails verschicken</i> sendet wirklich.</li>
+<li><b>Rechnungen verschicken</b> &ndash; ein Fenster: links alle Empfänger:innen (abhaken, filtern, sortieren),
+ rechts die gewählte Mail genau so, wie sie verschickt wird. Erst <i>… Mails verschicken</i> sendet wirklich.</li>
 <li><b>SEPA-Export für Infinity</b> &ndash; Auswahl prüfen; die Frage nach einzelnen Positionen mit <b>Nein</b>
  beantworten (verrechnet Gebühr und Gutschrift pro Person und Konto). Die zwei CSV-Dateien
  (Lastschriften, Überweisungen) in Raiffeisen Infinity hochladen.
@@ -131,8 +131,8 @@ and resized by dragging.</p>
 <ol>
 <li><b>Create invoices</b> &ndash; choose a folder; one PDF per membership. Needs Word or LibreOffice
  (keep LibreOffice closed meanwhile). Look at the first PDF.</li>
-<li><b>Send invoices</b> &ndash; choose recipients; the preview then shows every mail.
- Nothing is sent until <i>Send … mails</i>.</li>
+<li><b>Send invoices</b> &ndash; one window: all recipients on the left (tick, filter, sort), the selected mail
+ on the right exactly as it will be sent. Nothing is sent until <i>Send … mails</i>.</li>
 <li><b>SEPA export for Infinity</b> &ndash; check the selection; answer <b>No</b> to the question about separate
  positions (nets fee against credit per person and account). Upload the two CSV files
  (direct debits, transfers) to Raiffeisen Infinity.

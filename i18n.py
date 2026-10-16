@@ -586,4 +586,10 @@ EN = {
         'Help',
     'Anleitung: Ablauf und Datenquellen…':
         'Guide: steps and where the data comes from…',
+    'Filtern… (Name, Mailadresse, Datei)':
+        'Filter… (name, address, file)',
+    '{mails} ausgewählt':
+        '{mails} selected',
+    '{skipped} ohne PDF-Rechnung':
+        '{skipped} without a PDF invoice',
 }
