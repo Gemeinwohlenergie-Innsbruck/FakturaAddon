@@ -338,3 +338,31 @@ def test_documents_already_exported_are_an_error_and_mailed_a_warning(liste):
 
 def test_document_numbers_read_as_floats_still_match():
     assert v.document_key(1001.0) == "1001" and v.document_key(" RE-7 ") == "RE-7"
+
+
+# --- who needs a mandate -----------------------------------------------------
+
+def test_self_payers_and_covered_producers_need_no_mandate():
+    rows = pd.DataFrame([
+        # pays by transfer: Einzugsart NONE, no mandate
+        {"Dokumenttyp": "Rechnung", "Empfänger Name": "Anna", "Empfänger Einzugsart": "NONE",
+         "Empfänger Mandatsreferenz": None, "Empfänger Mandatsausstellung": None, "Pos. Bruttobetrag": 3.0},
+        # producer whose fee is covered by their credit
+        {"Dokumenttyp": "Rechnung", "Empfänger Name": "Peter", "Empfänger Einzugsart": "CORE",
+         "Empfänger Mandatsreferenz": None, "Empfänger Mandatsausstellung": None, "Pos. Bruttobetrag": 3.0},
+        {"Dokumenttyp": "Gutschrift", "Empfänger Name": "Peter", "Empfänger Einzugsart": "CORE",
+         "Empfänger Mandatsreferenz": None, "Empfänger Mandatsausstellung": None, "Pos. Bruttobetrag": 20.0},
+        # really collected, no mandate: still an error
+        {"Dokumenttyp": "Rechnung", "Empfänger Name": "Eva", "Empfänger Einzugsart": "CORE",
+         "Empfänger Mandatsreferenz": None, "Empfänger Mandatsausstellung": None, "Pos. Bruttobetrag": 9.0},
+    ])
+    findings = v.check_mandates(rows)
+    assert findings and all(f.names == {"Eva"} for f in findings)
+
+
+def test_a_shared_member_number_is_matched_by_name_not_flagged_as_iban_change(liste, members):
+    eva = pd.DataFrame({"Mit. Nr.": [1], "Name 1": ["Eva"], "Name 2": ["Gruber"],
+                        "IBAN.": ["AT611904300234573201"], "Mandat-Ref.": ["M9"],
+                        "Zählpunkt": [fx_other := "AT0050000000000000000000000000009"]})
+    findings = v.check_bank_details_current(liste, pd.concat([eva, members], ignore_index=True))
+    assert [f.severity for f in findings] == [WARNING]      # only "number shared"

@@ -151,3 +151,21 @@ def test_documents_of_a_member_are_found_by_name_pair():
         "Empfänger Nachname": ["Müller", "Müller", "Müller"],
     })
     assert documents_of_member(invoice_list, "Anna", "Müller") == ["1001", "1002"]
+
+
+def test_preview_documents_without_numbers_stay_apart():
+    """A preview export has no invoice numbers; every document used to be "the same"."""
+    from selection import document_ids
+    nan = float("nan")
+    invoice_list = pd.DataFrame({
+        "Nummer": [nan, nan, nan], "Abrechnung": ["Abr_YQ-2026-3"] * 3,
+        "Dokumenttyp": ["Rechnung", "Rechnung", "Gutschrift"],
+        "Empfänger Mitgliedsnummer": [12, 13, 12],
+        "Empfänger Name": ["Anna Müller", "Peter Schmidt", "Anna Müller"],
+    })
+    assert list(document_ids(invoice_list)) == ["Vorschau 2026-3/R12 Anna Müller",
+                                                "Vorschau 2026-3/R13 Peter Schmidt",
+                                                "Vorschau 2026-3/G12 Anna Müller"]
+    details = invoice_list.assign(**{"Pos. Bruttobetrag": [40.0, 55.0, 30.0]})
+    selected, _ = select_invoice_positions(invoice_list, details, [False, True, False])
+    assert list(selected["Pos. Bruttobetrag"]) == [55.0]

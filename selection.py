@@ -6,6 +6,8 @@ whose account gets debited and who receives an invoice, so they are the ones
 that most need tests.
 """
 
+import re
+
 import pandas as pd
 
 
@@ -32,8 +34,8 @@ def select_invoice_positions(invoice_list, invoice_details, selected_mask):
         # By document, not by person: someone with an invoice and a credit
         # note has two rows, and selecting by name brought in both documents
         # when only one was ticked.
-        selected = set(invoice_list.loc[mask, "Nummer"].map(_document_key))
-        details = invoice_details[invoice_details["Nummer"].map(_document_key).isin(selected)]
+        selected = set(document_ids(invoice_list.loc[mask]))
+        details = invoice_details[document_ids(invoice_details).isin(selected)]
     else:
         details = invoice_details[invoice_details["Empfänger Name"].isin(selected_names)]
     return details, selected_names
@@ -41,9 +43,49 @@ def select_invoice_positions(invoice_list, invoice_details, selected_mask):
 
 def _document_key(value):
     """Document numbers as text: Excel hands back 1017 as 1017.0."""
+    if _is_blank(value):
+        return ""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value).strip()
+
+
+def _is_blank(value):
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return not str(value).strip()
+
+
+def document_id(row):
+    """What identifies one document of an invoice export.
+
+    The invoice number, once there is one. A preview export ("Vorschau" in
+    EEG Faktura, before "Abrechnung durchführen") has no numbers at all, and
+    keying on the blank number made every document of a preview the same
+    document. Within one run each member has at most one document per type,
+    so period, type and member number identify it: "Vorschau 2026-3/R12".
+    """
+    number = _document_key(row.get("Nummer"))
+    if number:
+        return number
+    period = re.sub(r"^Abr_[A-Z]+-", "", str(row.get("Abrechnung", "") or "").strip())
+    kind = str(row.get("Dokumenttyp", "") or "?").strip()[:1].upper() or "?"
+    member = _document_key(row.get("Empfänger Mitgliedsnummer"))
+    # The name too: a real export had one member number on two people.
+    name = " ".join(str(row.get("Empfänger Name", "") or "").split())
+    return f"Vorschau {period}/{kind}{member} {name}".rstrip()
+
+
+def document_ids(frame):
+    """document_id for every row, as a Series aligned with ``frame``."""
+    if frame is None or frame.empty:
+        return pd.Series([], index=getattr(frame, "index", None), dtype=object)
+    return pd.Series([document_id(row) for _, row in frame.iterrows()], index=frame.index, dtype=object)
 
 
 def _name_key(first, last):
@@ -95,7 +137,5 @@ def documents_of_member(invoice_list, first, last,
     if "Nummer" not in invoice_list.columns:
         return []
     wanted = _name_key(first, last)
-    return [_document_key(number)
-            for number, f, l in zip(invoice_list["Nummer"], invoice_list[invoice_first],
-                                    invoice_list[invoice_last])
-            if _name_key(f, l) == wanted]
+    return [document_id(row) for _, row in invoice_list.iterrows()
+            if _name_key(row[invoice_first], row[invoice_last]) == wanted]

@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from i18n import tr
+from selection import document_id, document_ids
 
 ERROR = "error"      # will produce a wrong result or be rejected downstream
 WARNING = "warning"  # probably wrong, worth a look
@@ -188,11 +189,37 @@ def check_ibans(invoice_details):
     return findings
 
 
+NO_DEBIT = "NONE"     # Einzugsart of members who pay by transfer themselves
+
+
+def collected_debits(frame, amount_column):
+    """The invoices that will really be collected by direct debit.
+
+    Not those with Einzugsart NONE (no mandate - the member pays), and not
+    those of members whose credit notes cover them: the SEPA export nets a
+    producer's fee against their credit into one transfer, so nothing is
+    debited and no mandate is needed.
+    """
+    if not _has(frame, "Dokumenttyp", "Empfänger Name"):
+        return frame.iloc[0:0] if frame is not None else frame
+    kind = frame["Dokumenttyp"]
+    debits = frame[kind == "Rechnung"]
+    if "Empfänger Einzugsart" in frame:
+        debits = debits[debits["Empfänger Einzugsart"].astype(str).str.strip().str.upper() != NO_DEBIT]
+    if amount_column in frame:
+        amounts = pd.to_numeric(frame[amount_column], errors="coerce").fillna(0)
+        owed = amounts[kind == "Rechnung"].groupby(frame["Empfänger Name"]).sum()
+        credited = amounts[kind.isin(["Gutschrift", "Information"])].groupby(frame["Empfänger Name"]).sum()
+        covered = {name for name, debit in owed.items() if credited.get(name, 0) >= debit}
+        debits = debits[~debits["Empfänger Name"].isin(covered)]
+    return debits
+
+
 def check_mandates(invoice_details):
     """Direct debits without a mandate reference cannot be collected."""
     if not _has(invoice_details, "Dokumenttyp", "Empfänger Name"):
         return []
-    debits = invoice_details[invoice_details["Dokumenttyp"] == "Rechnung"]
+    debits = collected_debits(invoice_details, "Pos. Bruttobetrag")
     if debits.empty:
         return []
     findings = []
@@ -502,7 +529,7 @@ def energy_positions(invoice_details, energy, qov=None):
             impact = _cent(diff * price / 100 * (1 - discount / 100) * (1 + vat / 100))
         counts = quality_counts(labels, meter) if labels else None
         rows.append({
-            "Nummer": document_key(pos.get("Nummer")),
+            "Nummer": document_id(pos),
             "Name": str(pos.get("Empfänger Name", "")),
             "Dokumenttyp": str(pos.get("Dokumenttyp", "")),
             "Meter": meter, "Direction": direction,
@@ -592,7 +619,13 @@ def check_documents(invoice_list, invoice_details):
     if not _has(invoice_list, "Nummer", "Dokumenttyp") or invoice_details is None:
         return []
     findings = []
-    numbers = invoice_list["Nummer"].map(document_key)
+    numbers = document_ids(invoice_list)
+    if invoice_list["Nummer"].map(lambda x: not document_key(x)).all():
+        findings.append(Finding(
+            INFO, tr("Dokumente"),
+            tr("Vorschau-Export: die Dokumente haben noch keine Rechnungsnummern. Für den "
+               "echten Lauf in EEG Faktura »Abrechnung durchführen« und die Excel-Datei "
+               "erneut laden.")))
     duplicated = sorted(set(numbers[numbers.duplicated()]))
     if duplicated:
         findings.append(Finding(ERROR, tr("Dokumente"),
@@ -605,8 +638,8 @@ def check_documents(invoice_list, invoice_details):
             ERROR, tr("Dokumente"),
             tr("{n} Dokument(e) mit unbekanntem Typ - der SEPA-Export würde sie übergehen.",
                n=len(unknown)),
-            [f"{document_key(r['Nummer'])}: {r['Dokumenttyp']}" for _, r in unknown.iterrows()],
-            documents={document_key(r["Nummer"]): tr("unbekannter Typ") for _, r in unknown.iterrows()}))
+            [f"{document_id(r)}: {r['Dokumenttyp']}" for _, r in unknown.iterrows()],
+            documents={document_id(r): tr("unbekannter Typ") for _, r in unknown.iterrows()}))
     for frame in (invoice_list, invoice_details):
         if _has(frame, "Abrechnung"):
             periods = sorted(frame["Abrechnung"].dropna().astype(str).unique())
@@ -622,12 +655,12 @@ def check_documents(invoice_list, invoice_details):
             findings.append(Finding(
                 ERROR, tr("Beträge"),
                 tr("{n} Dokument(e) mit negativem Betrag.", n=len(negative)),
-                [document_key(v) for v in negative["Nummer"]],
-                documents={document_key(v): tr("negativer Betrag") for v in negative["Nummer"]}))
+                list(document_ids(negative)),
+                documents={d: tr("negativer Betrag") for d in document_ids(negative)}))
 
     if not _has(invoice_details, "Nummer", "Pos. Bruttobetrag"):
         return findings
-    positions = invoice_details.assign(_key=invoice_details["Nummer"].map(document_key))
+    positions = invoice_details.assign(_key=document_ids(invoice_details))
     in_list, in_details = set(numbers), set(positions["_key"])
     without_positions = sorted(in_list - in_details)
     orphans = sorted(in_details - in_list)
@@ -649,7 +682,7 @@ def check_documents(invoice_list, invoice_details):
         sums[key] = (sum(gross, Decimal(0)), sum(net, Decimal(0)) if net else None)
     mismatched, rows = {}, []
     for _, doc in invoice_list.iterrows():
-        key = document_key(doc["Nummer"])
+        key = document_id(doc)
         if key not in sums:
             continue
         for column, value in (("Rechnungsbetrag Brutto", sums[key][0]),
@@ -710,7 +743,7 @@ def check_position_arithmetic(invoice_details):
             problems.append(tr("brutto {stated} statt {expected}", stated=format_euro(gross),
                                expected=format_euro(net + vat)))
         if problems:
-            key = document_key(pos.get("Nummer"))
+            key = document_id(pos)
             wrong[key] = "; ".join(problems)
             rows.append(f"{key} ({pos.get('Empfänger Name', '')}): " + "; ".join(problems))
     if not wrong:
@@ -772,17 +805,29 @@ def check_bank_details_current(invoice_list, members):
     needed = ("Empfänger Mitgliedsnummer", "Empfänger Konto IBAN", "Dokumenttyp")
     if not _has(invoice_list, *needed) or not _has(members, "Mit. Nr.", "IBAN."):
         return []
+    def person(first, last):
+        return " ".join(f"{'' if _blank(first) else first} {'' if _blank(last) else last}".split()).casefold()
+
     by_number = {}
     for _, row in members.iterrows():
-        by_number.setdefault(document_key(row["Mit. Nr."]), row)
+        by_number.setdefault(document_key(row["Mit. Nr."]), []).append(row)
+    shared = sorted(number for number, rows_ in by_number.items()
+                    if len({person(r.get("Name 1"), r.get("Name 2")) for r in rows_}) > 1)
     changed, mandate, rows, mandate_rows = {}, {}, [], []
     for _, doc in invoice_list.iterrows():
         if doc["Dokumenttyp"] not in ("Rechnung", "Gutschrift"):
             continue
-        member = by_number.get(document_key(doc["Empfänger Mitgliedsnummer"]))
+        candidates = by_number.get(document_key(doc["Empfänger Mitgliedsnummer"]), [])
+        # Match the person too: one member number can belong to two people,
+        # and comparing against the other one's account is a false alarm.
+        wanted = " ".join(str(doc.get("Empfänger Name", "")).split()).casefold()
+        member = next((r for r in candidates
+                       if person(r.get("Name 1"), r.get("Name 2")) == wanted), None)
+        if member is None and len(candidates) == 1:
+            member = candidates[0]
         if member is None:
             continue
-        key, name = document_key(doc.get("Nummer")), doc.get("Empfänger Name", "")
+        key, name = document_id(doc), doc.get("Empfänger Name", "")
         now = normalise_iban(member["IBAN."])
         then = normalise_iban(doc["Empfänger Konto IBAN"])
         if now and then and now != then:
@@ -799,6 +844,11 @@ def check_bank_details_current(invoice_list, members):
                 mandate_rows.append(tr("{name}: {then} → {now}", name=name,
                                        then=ref_then, now=ref_now))
     findings = []
+    if shared:
+        findings.append(Finding(
+            WARNING, tr("Stammdaten"),
+            tr("{n} Mitgliedsnummer(n) sind in den Stammdaten mehreren Personen zugeordnet - "
+               "bitte in EEG Faktura korrigieren.", n=len(shared)), shared))
     if changed:
         findings.append(Finding(
             ERROR, tr("Bankverbindung"),
@@ -819,15 +869,26 @@ def check_sepa_prerequisites(invoice_list, today=None):
     if not _has(invoice_list, "Dokumenttyp"):
         return []
     today = today or dt.date.today()
-    debits = invoice_list[invoice_list["Dokumenttyp"] == "Rechnung"]
+    debits = collected_debits(invoice_list, "Rechnungsbetrag Brutto")
     findings = []
+    if "Empfänger Einzugsart" in invoice_list:
+        self_pay = invoice_list[(invoice_list["Dokumenttyp"] == "Rechnung")
+                                & (invoice_list["Empfänger Einzugsart"].astype(str).str.strip()
+                                   .str.upper() == NO_DEBIT)]
+        if not self_pay.empty:
+            findings.append(Finding(
+                INFO, tr("SEPA-Mandat"),
+                tr("{n} Rechnung(en) mit Einzugsart NONE werden nicht eingezogen - diese "
+                   "Mitglieder überweisen selbst (ihre Rechnung sagt das).", n=len(self_pay)),
+                list(self_pay["Empfänger Name"].astype(str)),
+                documents={document_id(r): tr("überweist selbst") for _, r in self_pay.iterrows()}))
     if "Empfänger Mandatsausstellung" in debits:
         future = {}
         for _, doc in debits.iterrows():
             signed = pd.to_datetime(doc["Empfänger Mandatsausstellung"], errors="coerce",
                                     dayfirst=True)
             if not pd.isna(signed) and signed.date() > today:
-                future[document_key(doc.get("Nummer"))] = tr("Mandat erst ab {date}",
+                future[document_id(doc)] = tr("Mandat erst ab {date}",
                                                              date=f"{signed:%d.%m.%Y}")
         if future:
             findings.append(Finding(
@@ -900,7 +961,7 @@ def check_previous_runs(invoice_list, exported=None, mailed=None):
             continue
         hits = {}
         for _, doc in invoice_list.iterrows():
-            key = document_key(doc["Nummer"])
+            key = document_id(doc)
             if key in ledger:
                 hits[key] = ledger[key]
         if hits:

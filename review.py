@@ -19,6 +19,7 @@ from decimal import Decimal
 import pandas as pd
 
 import validation as v
+from selection import document_id
 from i18n import tr
 
 OK = "ok"
@@ -79,7 +80,7 @@ def issues_by_document(invoice_list, findings):
     """Document number -> [(severity, text)], from every finding that concerns it."""
     by_name = defaultdict(list)
     for _, doc in invoice_list.iterrows():
-        by_name[_name_key(doc.get("Empfänger Name", ""))].append(v.document_key(doc["Nummer"]))
+        by_name[_name_key(doc.get("Empfänger Name", ""))].append(document_id(doc))
     issues = defaultdict(list)
     for finding in findings:
         for number, text in finding.documents.items():
@@ -108,15 +109,19 @@ def review_table(invoices, masterdata, energydata, findings):
             ok = not v._blank(address) and bool(v.EMAIL_RE.match(str(address).strip()))
             mail_by_member.setdefault(v.document_key(row["Mit. Nr."]), ok)
 
+    # Only debits that are really collected need a mandate: not Einzugsart
+    # NONE, not a producer's fee netted against their credit.
+    collected = {document_id(r) for _, r in
+                 v.collected_debits(invoice_list, "Rechnungsbetrag Brutto").iterrows()}
     rows = []
     for _, doc in invoice_list.iterrows():
-        number = v.document_key(doc["Nummer"])
+        number = document_id(doc)
         mine = positions[positions["Nummer"] == number] if not positions.empty else positions
         billed = _sum(mine["Billed"]) if not mine.empty else None
         expected = (_sum(mine["Expected"]) if not mine.empty and mine["Expected"].notna().all()
                     else None)
         kind = str(doc.get("Dokumenttyp", ""))
-        if kind == "Rechnung":
+        if kind == "Rechnung" and document_id(doc) in collected:
             has_mandate = not (v._blank(doc.get("Empfänger Mandatsreferenz"))
                                or v._blank(doc.get("Empfänger Mandatsausstellung")))
             mandate = "✓" if has_mandate else "✗"

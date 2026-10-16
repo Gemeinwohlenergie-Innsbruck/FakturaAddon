@@ -60,6 +60,15 @@ def check_doubles(invoices):
 
 def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
     debit,transfer, doublesprocess = check_doubles(invoices_selected_persons)
+    # Einzugsart NONE: no mandate, the member pays by transfer. Their
+    # invoice must not become a direct debit (the bank would reject it), but
+    # what they owe still reduces a credit note when positions are merged.
+    if "Empfänger Einzugsart" in debit.columns:
+        self_pay = debit["Empfänger Einzugsart"].astype(str).str.strip().str.upper() == "NONE"
+        owed_by_self_payers = debit[self_pay].groupby("Empfänger Name")["Pos. Bruttobetrag"].sum()
+        debit = debit[~self_pay]
+    else:
+        owed_by_self_payers = pd.Series(dtype=float)
 
     def create_one_line_debit(invoicelistline,EEG_name,datatype = "debit"):
         print(invoicelistline["Empfänger Name"])
@@ -193,6 +202,18 @@ def produce_sepa_export_dfs(invoices_selected_persons,EEG_name):
             debitexport = group_and_aggregate(debitexport,["Zahlungspflichtiger Name"],['Betrag in EUR'])
         if transferexport is not None:
             transferexport = group_and_aggregate(transferexport,["Empfänger Name"],['Betrag in EUR'])
+            for name, owed in owed_by_self_payers.items():
+                here = transferexport['Empfänger Name'] == name
+                if here.any():
+                    remaining = round(transferexport.loc[here, 'Betrag in EUR'].values[0] - owed, 2)
+                    if remaining > 0:
+                        transferexport.loc[here, 'Betrag in EUR'] = remaining
+                    else:
+                        # The credit does not cover the invoice: no payout,
+                        # the member transfers the rest.
+                        transferexport = transferexport.loc[~here].reset_index(drop=True)
+            if transferexport.empty:
+                transferexport = None
 
         if (debitexport is not None) and (transferexport is not None):
             doubles_names = debitexport[debitexport['Zahlungspflichtiger Name'].isin(transferexport['Empfänger Name'])]['Zahlungspflichtiger Name']
@@ -267,6 +288,15 @@ def resolve_name_in_energydata(energydata, name):
         except Exception:
             continue
     return None
+
+
+def _invoice_number(positions):
+    """The number printed on the invoice; a preview export has none yet and
+    printed "nan"."""
+    number = positions["Nummer"].iloc[0]
+    if number is None or pd.isna(number) or not str(number).strip():
+        return "VORSCHAU"
+    return str(int(number)) if isinstance(number, float) and number.is_integer() else str(number)
 
 
 def net_member_positions(debits_this, transfers_this):
@@ -385,10 +415,16 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         except: pass
         invoicenumberstr = ""
         if total_transfer_debit == "Rechnung":
-            invoicenumberstr = debits_this["Nummer"].iloc[0]
+            invoicenumberstr = _invoice_number(debits_this)
             parsing_dict["Überweisungstext"] = "Die gegenständliche Rechnungsforderung wird vereinbarungsgemäß von Ihrem Konto eingezogen."
+            if "Empfänger Einzugsart" in debits_this and \
+                    str(debits_this["Empfänger Einzugsart"].iloc[0]).strip().upper() == "NONE":
+                # No mandate: nothing will be collected, so do not say it will.
+                parsing_dict["Überweisungstext"] = (
+                    "Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer "
+                    f"auf das Konto der Energiegemeinschaft: {masterdata.metadata.get('IBAN', '')}.")
         if total_transfer_debit == "Gutschrift":
-            invoicenumberstr = transfers_this["Nummer"].iloc[0]
+            invoicenumberstr = _invoice_number(transfers_this)
             parsing_dict["Überweisungstext"] = "Die gegenständliche Gutschrift wird vereinbarungsgemäß auf Ihr Konto überwiesen."
 
         parsing_dict["Rechnungsnummer"] = invoicenumberstr

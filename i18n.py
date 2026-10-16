@@ -562,4 +562,12 @@ EN = {
         'leave empty: mail goes to the members',
     '{mails} an die Testadresse verschicken':
         'Send {mails} to the test address',
+    'Vorschau-Export: die Dokumente haben noch keine Rechnungsnummern. Für den echten Lauf in EEG Faktura »Abrechnung durchführen« und die Excel-Datei erneut laden.':
+        'Preview export: the documents have no invoice numbers yet. For the real run, use “Abrechnung durchführen” in EEG Faktura and load the Excel file again.',
+    '{n} Rechnung(en) mit Einzugsart NONE werden nicht eingezogen - diese Mitglieder überweisen selbst (ihre Rechnung sagt das).':
+        '{n} invoice(s) with Einzugsart NONE are not collected - these members pay by transfer (their invoice says so).',
+    'überweist selbst':
+        'pays by transfer',
+    '{n} Mitgliedsnummer(n) sind in den Stammdaten mehreren Personen zugeordnet - bitte in EEG Faktura korrigieren.':
+        '{n} member number(s) belong to more than one person in the member data - please correct in EEG Faktura.',
 }

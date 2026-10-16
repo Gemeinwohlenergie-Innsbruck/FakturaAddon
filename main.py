@@ -19,7 +19,7 @@ import eegfaktura_api
 import ledger
 import review
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
-from selection import select_invoice_positions, members_with_invoices, documents_of_member
+from selection import select_invoice_positions, members_with_invoices, documents_of_member, document_ids
 from config import ENV_PATH, load_env
 import config as config_module
 import validation
@@ -1272,9 +1272,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             return
                         creditor = self.creditor_key()
                         already = ledger.last_done(ledger.SEPA, creditor) if creditor else {}
-                        repeated = sorted({validation.document_key(n)
-                                           for n in invoices_selected_names.get("Nummer", [])}
-                                          & set(already))
+                        repeated = sorted(set(document_ids(invoices_selected_names)) & set(already))
                         if repeated:
                             box = QMessageBox(self)
                             box.setIcon(QMessageBox.Warning)
@@ -1350,7 +1348,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         done = invoices_selected_names[
                             invoices_selected_names["Empfänger Name"].isin(exported_names)]
                         if "Nummer" in done and not done.empty:
-                            amounts = done.groupby(done["Nummer"].map(validation.document_key))[
+                            amounts = done.groupby(document_ids(done))[
                                 "Pos. Bruttobetrag"].sum()
                             try:
                                 ledger.record(ledger.SEPA, creditor, self.billing_label(),

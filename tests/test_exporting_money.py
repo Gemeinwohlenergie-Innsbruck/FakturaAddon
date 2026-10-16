@@ -88,3 +88,15 @@ def test_unit_prices_keep_fractions_of_a_cent():
     assert format_unit_price(0.12) == "0.12"
     assert format_unit_price(5.0) == "5.00"
     assert format_unit_price(0.08) == "0.08"
+
+
+def test_self_payers_are_not_debited_and_their_debt_reduces_their_credit(monkeypatch):
+    monkeypatch.setattr(exporting.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: exporting.QMessageBox.No))
+    rows = [sepa_row("Anna", "Rechnung", 3.0), sepa_row("Anna", "Gutschrift", 10.0),
+            sepa_row("Eva", "Rechnung", 3.0), sepa_row("Peter", "Rechnung", 5.0)]
+    rows[0]["Empfänger Einzugsart"] = rows[1]["Empfänger Einzugsart"] = "NONE"
+    rows[2]["Empfänger Einzugsart"] = "NONE"
+    debit, transfer, _ = produce_sepa_export_dfs(pd.DataFrame(rows), "GEI")
+    assert list(debit["Zahlungspflichtiger Name"]) == ["Peter"]
+    assert list(transfer["Empfänger Name"]) == ["Anna"] and list(transfer["Betrag in EUR"]) == ["7,00"]
