@@ -79,15 +79,15 @@ def test_netted_zero_vat_is_not_negative():
 
 def test_fees_show_no_quantity_rather_than_nan():
     assert format_quantity(float("nan"), "") == ""
-    assert format_quantity(2.81, "kWh") == "2.81 kWh"
-    assert format_quantity(6.0, "kWh") == "6.00 kWh"
+    assert format_quantity(2.81, "kWh") == "2,81 kWh"
+    assert format_quantity(6.0, "kWh") == "6,00 kWh"
 
 
 def test_unit_prices_keep_fractions_of_a_cent():
-    assert format_unit_price(0.125) == "0.125"
-    assert format_unit_price(0.12) == "0.12"
-    assert format_unit_price(5.0) == "5.00"
-    assert format_unit_price(0.08) == "0.08"
+    assert format_unit_price(0.125) == "0,125"
+    assert format_unit_price(0.12) == "0,12"
+    assert format_unit_price(5.0) == "5,00"
+    assert format_unit_price(0.08) == "0,08"
 
 
 def test_self_payers_are_not_debited_and_their_debt_reduces_their_credit(monkeypatch):
@@ -111,3 +111,10 @@ def test_one_person_with_two_memberships_pays_from_each_account(monkeypatch):
     debit, transfer, _ = produce_sepa_export_dfs(pd.DataFrame([first, second]), "GEI")
     assert sorted(zip(debit["Zahlungspflichtiger IBAN"], debit["Betrag in EUR"])) == [
         ("AT611904300234573201", "9,94"), ("DE89370400440532013000", "11,22")]
+
+
+def test_amounts_use_german_grouping_and_decimal_comma():
+    from exporting import de_number, format_percent
+    assert de_number(1234.5) == "1.234,50"
+    assert de_number(-0.48) == "-0,48"
+    assert format_percent(20.0) == "20" and format_percent(9.5) == "9,5"

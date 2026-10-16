@@ -11,6 +11,9 @@ from PyQt5.QtWidgets import QMessageBox
 
 from i18n import tr
 from selection import invoice_file_stem, person_keys
+from validation import quarter_date_range
+from docxtpl import InlineImage
+from docx.shared import Mm
 
 
 # matplotlib and docx2pdf are imported on first use, not at module import.
@@ -20,18 +23,23 @@ from selection import invoice_file_stem, person_keys
 plt = None
 DateFormatter = None
 MonthLocator = None
+FuncFormatter = None
+num2date = None
 
 
 def _ensure_plotting():
     """Import matplotlib on demand and pin the headless backend."""
-    global plt, DateFormatter, MonthLocator
+    global plt, DateFormatter, MonthLocator, FuncFormatter, num2date
     if plt is not None:
         return
     import matplotlib
     matplotlib.use("Agg")                       # must precede the pyplot import
     import matplotlib.pyplot as _plt
-    from matplotlib.dates import DateFormatter as _DateFormatter, MonthLocator as _MonthLocator
+    from matplotlib.dates import (DateFormatter as _DateFormatter, MonthLocator as _MonthLocator,
+                                  num2date as _num2date)
+    from matplotlib.ticker import FuncFormatter as _FuncFormatter
     plt, DateFormatter, MonthLocator = _plt, _DateFormatter, _MonthLocator
+    FuncFormatter, num2date = _FuncFormatter, _num2date
 
 
 def check_doubles(invoices):
@@ -411,22 +419,88 @@ def net_member_positions(debits_this, transfers_this):
     return kind, pd.concat([debits_this, transfers_this], axis=0)
 
 
+GRID_COLOUR = "#69a4dc"        # energy from the supplier
+COMMUNITY_COLOUR = "#ff9f34"   # energy through the community - the logo's orange
+GERMAN_MONTHS = ["Jän", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+
+
+def style_energy_chart(fig, panels):
+    """Titles, quiet axes and one legend above the panels.
+
+    The legend used to sit inside the top panel, over the bars, and the
+    three panels had no titles to say what they show.
+    """
+    titles = ["Pro Woche", "Tagesverlauf (Durchschnitt)", "Nach Wochentag (Summe)"]
+    for ax, title in zip(panels, titles):
+        ax.set_title(title, loc="left", fontsize=8.5, fontweight="bold", color="#0c1112", pad=4)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color("#b8bec4")
+        ax.tick_params(labelsize=7, colors="#4a535b", length=2)
+        ax.yaxis.label.set_size(7.5)
+        ax.yaxis.label.set_color("#4a535b")
+        ax.grid(axis="y", color="#e2e6ea", linewidth=0.6)
+        ax.set_axisbelow(True)
+    handles, labels = panels[0].get_legend_handles_labels()
+    # Colours say where the energy went, hatching which meter: one entry per
+    # colour and one per meter, instead of every combination - six entries
+    # for three meters ran off the edge of the chart.
+    from matplotlib.patches import Patch
+    colours, meters = {}, {}
+    for handle, label in zip(handles, labels):
+        what, _, meter = label.partition(" – ")
+        patch = handle.patches[0] if hasattr(handle, "patches") and handle.patches else handle
+        colours.setdefault(what, patch.get_facecolor())
+        if meter:
+            meters.setdefault(meter, (patch.get_hatch(), patch.get_edgecolor()))
+    entries = [Patch(facecolor=c, label=w) for w, c in colours.items()]
+    if len(meters) > 1:
+        # Light grey with dark hatching: the bars' white hatching would not
+        # show in a legend box.
+        entries += [Patch(facecolor="#dfe3e6", edgecolor="#4a535b", linewidth=0.4,
+                          hatch=(h * 2) if h else "", label=m)
+                    for m, (h, e) in meters.items()]
+    columns = min(len(entries), 4) or 1
+    rows = max(1, -(-len(entries) // columns))
+    if entries:
+        fig.legend(handles=entries, loc="upper center", ncol=columns, fontsize=6.5, frameon=False,
+                   bbox_to_anchor=(0.5, 1.0), handlelength=1.6, columnspacing=1.4)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.06 * rows), h_pad=0.8, w_pad=2.0)
+
+
+def de_number(value, decimals=2):
+    """1234.5 -> "1.234,50": German grouping and decimal comma, as the
+    invoice is German. The dot decimals it printed before ("1.22") read as
+    thousands to a German reader."""
+    text = f"{float(value):,.{decimals}f}"
+    return text.replace(",", " ").replace(".", ",").replace(" ", ".")
+
+
 def format_quantity(value, unit):
-    """"2.81 kWh"; nothing for fees, which EEG Faktura exports without a
+    """"2,81 kWh"; nothing for fees, which EEG Faktura exports without a
     quantity - astype(str) printed "nan" on the member's invoice."""
     if value is None or pd.isna(value):
         return ""
     unit = "" if unit is None or pd.isna(unit) else str(unit)
-    return f"{float(value):.2f} {unit}".strip()
+    return f"{de_number(value)} {unit}".strip()
 
 
 def format_unit_price(value):
-    """At least two decimals, up to four: 12.5 ct is 0.125 €/kWh, and
-    rounding it to 0.12 showed a price that does not multiply out to the
+    """At least two decimals, up to four: 12.5 ct is 0,125 €/kWh, and
+    rounding it to 0,12 showed a price that does not multiply out to the
     amount charged."""
     text = f"{float(value):.4f}".rstrip("0")
     whole, _, decimals = text.partition(".")
-    return f"{whole}.{decimals.ljust(2, '0')}"
+    return de_number(float(f"{whole}.{decimals or 0}"), max(2, len(decimals)))
+
+
+def format_percent(value):
+    """20.0 -> "20", 9.5 -> "9,5"."""
+    if value is None or pd.isna(value):
+        return ""
+    value = float(value)
+    return str(int(value)) if value.is_integer() else de_number(value, 1)
 
 
 def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,savedirfp,callback,
@@ -448,6 +522,9 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
     energydata.index = pd.to_datetime(energydata.index, format="%d.%m.%Y %H:%M:%S")
     # One invoice per membership (member number and name), not per name: one
     # person with two memberships has two invoices, addresses and accounts.
+    # The current template places the chart with {{ Grafik }}; older ones
+    # have a fixed picture called Image2 instead.
+    chart_inline = "Grafik" in invoicetemplate.get_undeclared_template_variables()
     who = person_keys(invoicedata)
     people = list(dict.fromkeys(who))
     nr_all_persons = len(people)
@@ -466,7 +543,9 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         total_transfer_debit, all_position_for_tbl = net_member_positions(debits_this, transfers_this)
         postext =  all_position_for_tbl.copy()
         postext.loc[postext['Pos. Text'].str.contains('Mitgliedsgebuer'),'Pos. Text'] = ''
-        all_position_for_tbl['Pos. Invoicetext'] = (all_position_for_tbl['Pos. Tarif'] + "\n"+ postext['Pos. Text'])
+        # Stripped: a fee's emptied text left a blank line under its row.
+        all_position_for_tbl['Pos. Invoicetext'] = (all_position_for_tbl['Pos. Tarif'].fillna("") + "\n"
+                                                    + postext['Pos. Text'].fillna("")).str.strip()
         all_position_for_tbl['Pos. Preis / Einheit'] = all_position_for_tbl['Pos. Preis / Einheit'].astype(float)
 
         all_position_for_tbl['Pos. Menge'] = [format_quantity(q, u) for q, u in zip(
@@ -474,14 +553,16 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         all_position_for_tbl.loc[all_position_for_tbl['Pos. Preis / Einheit Euro/Cent'] == "Ct",'Pos. Preis / Einheit'] = all_position_for_tbl.loc[all_position_for_tbl['Pos. Preis / Einheit Euro/Cent'] == "Ct",'Pos. Preis / Einheit']/ 100
         # Two decimals, like every other amount on the invoice: str(round())
         # printed 12.5 for 12.50.
-        sumnetto = f"{all_position_for_tbl['Pos. Nettobetrag'].sum():.2f}"
-        sumbrutto = f"{all_position_for_tbl['Pos. Bruttobetrag'].sum():.2f}"
+        sumnetto = de_number(all_position_for_tbl['Pos. Nettobetrag'].sum())
+        sumbrutto = de_number(all_position_for_tbl['Pos. Bruttobetrag'].sum())
+        sumust = de_number(all_position_for_tbl['Pos. UST Betrag'].sum())
 
 
 
         cols_for_tbl = ['Pos. Invoicetext','Pos. Menge','Pos. Preis / Einheit','Pos. Nettobetrag','Pos. UST %','Pos. UST Betrag','Pos. Bruttobetrag']
         moneycols = ['Pos. Nettobetrag','Pos. UST Betrag','Pos. Bruttobetrag']
-        all_position_for_tbl[moneycols] = all_position_for_tbl[moneycols].map("{0:.2f}".format)
+        all_position_for_tbl[moneycols] = all_position_for_tbl[moneycols].map(de_number)
+        all_position_for_tbl['Pos. UST %'] = all_position_for_tbl['Pos. UST %'].map(format_percent)
         all_position_for_tbl['Pos. Preis / Einheit'] = all_position_for_tbl['Pos. Preis / Einheit'].map(format_unit_price)
         all_position_for_tbl = all_position_for_tbl[cols_for_tbl]
 
@@ -508,6 +589,10 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         try:
             parsing_dict["community_companynumber"] = masterdata.metadata['Geschäftsnummer']
         except: pass
+        # "21a , 6020": the Stammdaten's house number carries a trailing space.
+        for key in [k for k in parsing_dict if k.startswith("community_")]:
+            if isinstance(parsing_dict[key], str):
+                parsing_dict[key] = parsing_dict[key].strip()
         invoicenumberstr = ""
         if total_transfer_debit == "Rechnung":
             invoicenumberstr = _invoice_number(debits_this)
@@ -528,16 +613,34 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         parsing_dict["Quartal"] = quart
         parsing_dict["TotalSumNetto"] = sumnetto
         parsing_dict["TotalSumBrutto"] = sumbrutto
+        parsing_dict["TotalSumUst"] = sumust
+        parsing_dict["TotalLabel"] = ("Gutschriftsbetrag" if total_transfer_debit == "Gutschrift"
+                                      else "Rechnungsbetrag")
+        parsing_dict["Einleitung"] = (
+            "Für die an die Energiegemeinschaft gelieferte Energie schreiben wir Ihnen "
+            "folgenden Betrag gut:" if total_transfer_debit == "Gutschrift"
+            else "Wie vereinbart erlauben wir uns, folgende Leistungen in Rechnung zu stellen:")
+        try:
+            first_day, last_day = quarter_date_range(year, quart)
+            parsing_dict["Zeitraum"] = f"{first_day:%d.%m.%Y} – {last_day:%d.%m.%Y}"
+        except (ValueError, TypeError):
+            parsing_dict["Zeitraum"] = f"{quart}. Quartal {year}"
+        member = invoicethis["Empfänger Mitgliedsnummer"].iloc[0] if "Empfänger Mitgliedsnummer" in invoicethis else ""
+        parsing_dict["Mitgliedsnummer"] = ("" if member is None or pd.isna(member) else
+                                          str(int(member)) if isinstance(member, float) and member.is_integer()
+                                          else str(member))
 
 
 
         # print(parsing_dict)
         image_stream = BytesIO()
-        sizemutiplier = 1.9
-
-        fig, axs = plt.subplots(4, height_ratios=[0.3,10,10,10],figsize=(4.2 * sizemutiplier, 2.7 * sizemutiplier))
-        #axs[0] is only for the spacing
-        axs[0].set_xticklabels([])
+        # Full text width (170 mm); three panels, legend above them.
+        # Weekly across the top, daily profile and weekdays side by side
+        # below: compact enough to stay on page one for most invoices.
+        fig = plt.figure(figsize=(170 / 25.4, 72 / 25.4))
+        grid = fig.add_gridspec(2, 2, height_ratios=[1, 1])
+        panels = [fig.add_subplot(grid[0, :]), fig.add_subplot(grid[1, 0]), fig.add_subplot(grid[1, 1])]
+        axs = [None, *panels]                     # axs[1..3], as the plotting code expects
         # prepare data for plot
         # check whether the energy direction is always the same
         # Charts from the meters billed on this invoice. By name alone, a
@@ -572,7 +675,8 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
         energydirections = own.columns.get_level_values(level="Energy direction")
         meteringpointids = own.columns.get_level_values(level="MeteringpointID")
         hatches = ['', '/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*']
-        edgecolors = ['none', 'black', 'green', 'red']
+        # Hatching in white on the coloured bars: black hatching was noisy.
+        edgecolors = ['white', '#0c1112', '#2f6fa8', '#a4283a']
         hatches_this_person = [x for x, y in zip(hatches, range(0, meteringpointids.unique().shape[
             0]))]  # take nr meteringpoints hatches
         hatchnr = 0
@@ -602,9 +706,11 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
 
             xaxis_energy_through_eeg = xaxis_energy_through_eeg[1:-1]
 
-            dailyhourmean_energy_through_evu = energy_through_evu.groupby(energy_through_evu.index.hour).mean()
+            # Mean quarter-hour energy x 4 = mean power, which is what the
+            # axis says (kW); it showed kWh per quarter-hour labelled kW.
+            dailyhourmean_energy_through_evu = energy_through_evu.groupby(energy_through_evu.index.hour).mean() * 4
             dailyhourmean_through_eeg = energy_through_eg.groupby(
-                energy_through_eg.index.hour).mean()
+                energy_through_eg.index.hour).mean() * 4
             barwidth = dt.timedelta(days=3)
             xaxis_energy_through_evu = [x - 0.5 * barwidth for x in xaxis_energy_through_evu]
             xaxis_energy_through_eeg = [x + 0.5 * barwidth for x in xaxis_energy_through_eeg]
@@ -620,15 +726,16 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
 
             axs[1].bar(xaxis_energy_through_evu, energy_through_evu_weeklysum.values.flatten(), width=barwidth,
                        label=plottext1,
-                       color="#69a4dc", hatch=hatch, edgecolor=edgecolor)
+                       color=GRID_COLOUR, hatch=hatch, edgecolor=edgecolor)
             # print(f"energy_through_evu_weeklysum:{energy_through_evu_weeklysum}")
 
             axs[1].bar(xaxis_energy_through_eeg, energy_through_eeg_weeklysum.values.flatten(), width=barwidth,
                        label=plottext2,
-                       color="#f8ae42", hatch=hatch, edgecolor=edgecolor)
+                       color=COMMUNITY_COLOUR, hatch=hatch, edgecolor=edgecolor)
             # print(f"energy_through_evu_weeklysum:{energy_through_eeg_weeklysum}")
             axs[1].xaxis.set_major_locator(MonthLocator())
-            axs[1].xaxis.set_major_formatter(DateFormatter('%b %Y'))
+            axs[1].xaxis.set_major_formatter(FuncFormatter(
+                lambda x, _: f"{GERMAN_MONTHS[num2date(x).month - 1]} {num2date(x).year}"))
             # axs[1].xaxis.set_label_position("right")
             axs[1].set_ylabel("kWh")
 
@@ -648,7 +755,7 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
             axs[3].bar(np.linspace(0, 6, 7) + 0.5 * barwidth, energy_through_eg_weekday.flatten(), width=barwidth,
                        color="#f8ae42", tick_label=xaxis_weekdays, hatch=hatch, edgecolor=edgecolor)
             axs[3].set_ylabel("kWh")
-            axs[1].legend(fontsize='small', loc=1, bbox_to_anchor=(0.8, 1.22))
+            # The legend is drawn once, above all three panels, after plotting.
         sidetext = ""
 
         def read_series(energydirection, meteringpointid):
@@ -677,8 +784,8 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
                     through_eg = pd.DataFrame(
                         np.nan_to_num(total.values, nan=0.0) - np.nan_to_num(through_evu.values, nan=0.0),
                         index=total.index)
-                    text1 = f"Energielieferung an außerhalb der Energiegemeinschaft{' von' + zp if zp else ''}"
-                    text2 = f"Energielieferung über unsere Energiegemeinschaft{' von' + zp if zp else ''}"
+                    text1 = f"Einspeisung ins Netz{' –' + zp if zp else ''}"
+                    text2 = f"Lieferung an die Energiegemeinschaft{' –' + zp if zp else ''}"
                 else:
                     total = energydata.loc[:, pd.IndexSlice[mp, name, energydirection,
                         "Gesamtverbrauch lt. Messung (bei Teilnahme gem. Erzeugung) [KWH]"]].sort_index()
@@ -689,8 +796,8 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
                     through_evu = pd.DataFrame(
                         np.nan_to_num(total.values, nan=0.0) - np.nan_to_num(through_eg.values, nan=0.0),
                         index=total.index)
-                    text1 = f"Energiebezug von Stromlieferant{' für' + zp if zp else ''}"
-                    text2 = f"Energiebezug über unsere Energiegemeinschaft{' für' + zp if zp else ''}"
+                    text1 = f"Bezug vom Stromlieferanten{' –' + zp if zp else ''}"
+                    text2 = f"Bezug aus der Energiegemeinschaft{' –' + zp if zp else ''}"
             except Exception as e:
                 print(f"No energy data for {name} / {energydirection} / {meteringpointid}: {e}")
                 return None
@@ -705,18 +812,19 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
                     "total_eg": total_eg, "share": share}
 
         def compose_sidetext(energydirection, meteringpointid, single, total_eg, share):
-            zp = "" if meteringpointid is None else f"ZP {meteringpointid[-6:]}"
+            # One line per meter: four lines each pushed three-meter invoices
+            # onto a second page.
+            zp = "" if meteringpointid is None else f"ZP …{meteringpointid[-6:]}"
+            kwh, pct = de_number(total_eg, 1), de_number(share, 1)
             if energydirection == "GENERATION":
                 if single or not zp:
-                    return (f"Insgesamt wurden {total_eg:.1f}kWh an die Energiegemeinschaft verkauft. \n"
-                            f"Dies ist {share:.1f}% deiner gesamten erzeugten Energie in diesem Quartal.\n")
-                return (f"Von {zp} wurden {total_eg:.1f}kWh an die Energiegemeinschaft geliefert. \n"
-                        f"Dies ist {share:.1f}% der erzeugten Energie in diesem Quartal.\n")
+                    return (f"Insgesamt hast du {kwh} kWh an die Energiegemeinschaft geliefert – "
+                            f"{pct} % deiner Erzeugung in diesem Quartal.\n")
+                return f"{zp}: {kwh} kWh an die Energiegemeinschaft geliefert ({pct} % der Erzeugung)\n"
             if single or not zp:
-                return (f"Insgesamt wurden {total_eg:.1f}kWh über die Energiegemeinschaft bezogen. \n"
-                        f"Dies ist {share:.1f}% deines Gesamtenergieverbrauchs in diesem Quartal.\n")
-            return (f"Von {zp} wurden {total_eg:.1f}kWh über die Energiegemeinschaft bezogen. \n"
-                    f"Dies ist {share:.1f}% des Verbrauchs in diesem Quartal.\n")
+                return (f"Insgesamt hast du {kwh} kWh über die Energiegemeinschaft bezogen – "
+                        f"{pct} % deines Verbrauchs in diesem Quartal.\n")
+            return f"{zp}: {kwh} kWh über die Energiegemeinschaft bezogen ({pct} % des Verbrauchs)\n"
 
         unique_meteringpoints = meteringpointids.unique()
         single_meteringpoint = unique_meteringpoints.shape[0] == 1
@@ -753,17 +861,19 @@ def produce_invoices_and_save(energydata,invoicedata,masterdata,invoicetemplate,
                                                    hatch, edgecolor)
                 hatchnr += 1
 
-        invoicetemplate.render(parsing_dict)
-        # fig.set_size(3.49, 1.97)
-        # fig.tight_layout(rect=(0.05, 0.1, 1, 0.8))
-        fig.subplots_adjust(wspace=0.4, hspace=0.3)
-        plt.savefig(image_stream, format="png")
-        # plt.show()
-
-        plt.close()
+        style_energy_chart(fig, axs[1:])
+        plt.savefig(image_stream, format="png", dpi=200)
+        plt.close(fig)
         image_stream.seek(0)
-
-        invoicetemplate.replace_pic("Image2", image_stream)
+        if chart_inline:
+            # Current template: an inline image that flows to the next page.
+            parsing_dict["TextfürVerbrauch"] = parsing_dict["TextfürVerbrauch"].rstrip("\n")
+            parsing_dict["Grafik"] = InlineImage(invoicetemplate, image_stream, width=Mm(170))
+            invoicetemplate.render(parsing_dict)
+        else:
+            # Older templates carry a fixed picture named Image2 to swap.
+            invoicetemplate.render(parsing_dict)
+            invoicetemplate.replace_pic("Image2", image_stream)
 
 
 
