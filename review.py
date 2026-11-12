@@ -48,8 +48,18 @@ def fingerprint(invoices, masterdata, energydata):
     add(getattr(energydata, "data", None))
     add(getattr(energydata, "metadata", None))
     meta = getattr(masterdata, "metadata", None) or {}
-    digest.update(json.dumps(meta, sort_keys=True, default=str).encode("utf-8"))
+    digest.update(json.dumps(_canonical(meta), sort_keys=True, default=str).encode("utf-8"))
     return digest.hexdigest()
+
+
+def _canonical(value):
+    """Keys as text, so json can sort them: an Excel sheet can give a blank
+    (NaN, a float) label next to text ones."""
+    if isinstance(value, dict):
+        return {str(k): _canonical(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical(v) for v in value]
+    return value
 
 
 def _name_key(name):

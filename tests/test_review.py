@@ -91,3 +91,10 @@ def test_a_member_without_mail_is_never_shown_as_ok(details, liste, members, ene
                                 Loaded(members.assign(**{"E-Mail": ["anna@example.at", ""]}), META),
                                 Loaded(energy, qov_for(energy)), [])
     assert table.iloc[1]["Mail"] == "✗" and table.iloc[1]["Status"] == v.WARNING
+
+
+def test_fingerprint_with_mixed_metadata_keys():
+    from types import SimpleNamespace
+    masterdata = SimpleNamespace(data=None, metadata={float("nan"): "x", "Tenant": "CC100438", 3: {1.5: "a", "b": 2}})
+    first = review.fingerprint(None, masterdata, None)
+    assert first == review.fingerprint(None, masterdata, None)
