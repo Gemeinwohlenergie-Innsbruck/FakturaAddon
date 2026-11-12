@@ -603,6 +603,8 @@ EN = {
     'In welchem Format sollen die Rechnungen gespeichert werden?':
         'Which format should the invoices be saved in?',
     # Extra positions (extras.py, extras_dialog.py)
+    'Der Zähler zählt fortlaufend. Abgerechnet wird der Verbrauch seit der letzten Ablesung: Zählerstand neu − Zählerstand alt. Der alte Stand wird ab dem zweiten Quartal automatisch eingetragen.':
+        'The meter counts continuously. What is billed is the consumption since the last reading: current reading − previous reading. From the second quarter on, the previous reading is filled in automatically.',
     'z. B. {example}':
         'e.g. {example}',
     'Zusatzpositionen (Ablesungen)':

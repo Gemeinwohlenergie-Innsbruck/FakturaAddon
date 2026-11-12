@@ -66,6 +66,11 @@ class ReadingDialog(QDialog):
         self.repeat.setChecked(every_quarter)
         form.addRow("", self.repeat)
         layout.addLayout(form)
+        explain = QLabel(tr("Der Zähler zählt fortlaufend. Abgerechnet wird der Verbrauch seit der "
+                            "letzten Ablesung: Zählerstand neu − Zählerstand alt. Der alte Stand wird "
+                            "ab dem zweiten Quartal automatisch eingetragen."))
+        explain.setWordWrap(True)
+        layout.addWidget(explain)
 
         self.preview = QLabel()
         self.preview.setWordWrap(True)
@@ -105,16 +110,23 @@ class ReadingDialog(QDialog):
         self.current.clear()
         self.update_preview()
 
+    def readings(self):
+        """(previous, current, problem) - the two readings, before anything else is checked."""
+        previous, current = extras.parse_reading(self.previous.text()), extras.parse_reading(self.current.text())
+        if previous is None or current is None:
+            return previous, current, tr("Beide Zählerstände eingeben.")
+        if current <= previous:
+            return previous, current, tr("Der neue Zählerstand muss größer sein als der alte.")
+        return previous, current, None
+
     def read(self):
         """(extra, problem): problem is a text when the form is not complete."""
         key = self.key()
         if key is None:
             return None, tr("Kein Mitglied mit Verbrauchsposition in dieser Abrechnung.")
-        previous, current = extras.parse_reading(self.previous.text()), extras.parse_reading(self.current.text())
-        if previous is None or current is None:
-            return None, tr("Beide Zählerstände eingeben.")
-        if current <= previous:
-            return None, tr("Der neue Zählerstand muss größer sein als der alte.")
+        previous, current, problem = self.readings()
+        if problem:
+            return None, problem
         if not self.description.text().strip():
             return None, tr("Text für die Rechnung eingeben.")
         if not self.reason.text().strip():
@@ -131,17 +143,22 @@ class ReadingDialog(QDialog):
             self.tariff_label.setText(_tariff_text(self.tariffs[key]))
         extra, problem = self.read()
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(extra is not None)
-        if extra is None:
+        previous, current, reading_problem = self.readings()
+        if key is None or reading_problem:
             self.preview.setText(f"<span style='color:{theme.WARNING}'>{problem}</span>")
             return
-        net, vat, gross = extras.amounts(extra.kwh, self.tariffs[key])
+        # The amount as soon as both readings make sense, whatever else is
+        # still missing - it is what the operator is checking while typing.
+        kwh = extras.kwh_between(previous, current)
+        net, vat, gross = extras.amounts(kwh, self.tariffs[key])
+        missing = f"<br><span style='color:{theme.WARNING}'>{problem}</span>" if problem else ""
         self.preview.setText(tr(
             "<b>{kwh} kWh</b> ({current} − {previous}) · netto {net} + USt {vat} = "
             "<b>{gross} brutto</b> zusätzlich auf {document}, wird mit der Rechnung eingezogen.",
-            kwh=extras.format_number(extra.kwh), current=extras.format_number(extra.current),
-            previous=extras.format_number(extra.previous), net=v.format_euro(net),
+            kwh=extras.format_number(kwh), current=extras.format_number(current),
+            previous=extras.format_number(previous), net=v.format_euro(net),
             vat=v.format_euro(vat), gross=v.format_euro(gross),
-            document=self.tariffs[key]["document"]))
+            document=self.tariffs[key]["document"]) + missing)
 
     def accept_reading(self):
         extra, problem = self.read()
