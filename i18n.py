@@ -602,4 +602,101 @@ EN = {
         'PDF and Word (.docx)',
     'In welchem Format sollen die Rechnungen gespeichert werden?':
         'Which format should the invoices be saved in?',
+    # Extra positions (extras.py, extras_dialog.py)
+    'Zusatzpositionen (Ablesungen)':
+        'Extra positions (meter readings)',
+    'Zusatzpositionen (Ablesungen)…':
+        'Extra positions (meter readings)…',
+    '  ·  {n} Zusatzposition(en)':
+        '  ·  {n} extra position(s)',
+    '<b>{kwh} kWh</b> ({current} − {previous}) · netto {net} + USt {vat} = <b>{gross} brutto</b> zusätzlich auf {document}, wird mit der Rechnung eingezogen.':
+        '<b>{kwh} kWh</b> ({current} − {previous}) · net {net} + VAT {vat} = <b>{gross} gross</b> added to {document}, collected with the invoice.',
+    'Ablesung fehlt noch für: {names}':
+        'Reading still missing for: {names}',
+    'Bearbeiten…':
+        'Edit…',
+    'Beide Zählerstände eingeben.':
+        'Enter both meter readings.',
+    'Den Rechnungsdaten fehlen Gläubiger-IBAN oder Abrechnungszeitraum.':
+        'The invoice data lacks the creditor IBAN or the billing period.',
+    'Der neue Zählerstand muss größer sein als der alte.':
+        'The new reading must be greater than the previous one.',
+    'Die Zählerstände konnten nicht gespeichert werden:\n{error}':
+        'The meter readings could not be saved:\n{error}',
+    'Die gespeicherten Zählerstände konnten nicht gelesen werden:\n{error}':
+        'The saved meter readings could not be read:\n{error}',
+    'Entfernen':
+        'Remove',
+    'Für Verbrauch, der nicht in EEG Faktura ankommt (z. B. gemessen vor dem Wechselrichter). Die Differenz der Zählerstände wird mit dem Verbrauchstarif des Mitglieds berechnet und auf seiner Rechnung ergänzt - in PDF, Prüfung und SEPA-Lastschrift. Die Daten aus EEG Faktura bleiben unverändert; dort fehlt dieser Betrag.':
+        "For consumption that never reaches EEG Faktura (e.g. measured before the inverter). The difference between the meter readings is charged at the member's consumption tariff and added to their invoice - in the PDF, the review and the SEPA direct debit. The data in EEG Faktura stays unchanged; this amount is missing there.",
+    'Für {name} gibt es in dieser Abrechnung schon eine Ablesung. Ersetzen?':
+        '{name} already has a reading in this billing run. Replace it?',
+    'Grund / Beleg':
+        'Reason / evidence',
+    'Grund bzw. Beleg der Ablesung eingeben - er steht im Prüfprotokoll.':
+        'Enter the reason or evidence for the reading - it goes into the review record.',
+    'Hinzufügen…':
+        'Add…',
+    'Jedes Quartal daran erinnern':
+        'Remind me every quarter',
+    'Kein Mitglied mit Verbrauchsposition in dieser Abrechnung.':
+        'No member with a consumption position in this billing run.',
+    'Mitglied':
+        'Member',
+    'Nr.':
+        'No.',
+    'Tarif':
+        'Tariff',
+    'Text auf der Rechnung':
+        'Text on the invoice',
+    'Text für die Rechnung eingeben.':
+        'Enter the text for the invoice.',
+    'Zusatzposition':
+        'Extra position',
+    'Zusatzposition für {name} aus dieser Abrechnung entfernen?':
+        'Remove the extra position for {name} from this billing run?',
+    'Zusatzpositionen':
+        'Extra positions',
+    'Zusatzpositionen (nicht in EEG Faktura)':
+        'Extra positions (not in EEG Faktura)',
+    'Zusatzpositionen {period}':
+        'Extra positions {period}',
+    'Zählerstand alt (kWh)':
+        'Previous reading (kWh)',
+    'Zählerstand neu (kWh)':
+        'Current reading (kWh)',
+    'keine Rechnung':
+        'no invoice',
+    'ohne USt':
+        'no VAT',
+    'z. B. Ablesung vom 30.09.2026 durch …':
+        'e.g. read on 30.09.2026 by …',
+    '{description}: Zählerstand {previous} → {current} = {kwh} kWh, +{gross} brutto. Grund: {reason}':
+        '{description}: reading {previous} → {current} = {kwh} kWh, +{gross} gross. Reason: {reason}',
+    '{kwh} kWh in einem Quartal ist ungewöhnlich viel. Zählerstände richtig?':
+        '{kwh} kWh in one quarter is unusually high. Are the readings correct?',
+    '{name} hat in dieser Abrechnung keine Rechnung mit Verbrauchsposition - die Zusatzposition wurde nicht übernommen.':
+        '{name} has no invoice with a consumption position in this billing run - the extra position was not added.',
+    '{name} hat in dieser Abrechnung keine Rechnung mit Verbrauchsposition.':
+        '{name} has no invoice with a consumption position in this billing run.',
+    '{name}: Dokument {document} fehlt in der Liste.':
+        '{name}: document {document} is missing from the list.',
+    '{name}: der neue Zählerstand ist nicht größer als der alte - nicht übernommen.':
+        '{name}: the new reading is not greater than the previous one - not added.',
+    '{name}: jedes Quartal ist eine Zusatzposition vorgesehen, für diese Abrechnung fehlt die Ablesung.':
+        '{name}: an extra position is due every quarter, but this billing run has no reading.',
+    '{n} · +{total}':
+        '{n} · +{total}',
+    'Text':
+        'Text',
+    'Zählerstand alt':
+        'Previous reading',
+    'Zählerstand neu':
+        'Current reading',
+    'kWh':
+        'kWh',
+    'Brutto':
+        'Gross',
+    'Grund':
+        'Reason',
 }

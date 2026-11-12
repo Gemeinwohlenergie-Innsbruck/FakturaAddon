@@ -42,6 +42,11 @@ und in der Breite ziehen.</p>
 <ol>
 <li><b>Daten prüfen</b> &ndash; schnelle Liste der Befunde (optional).</li>
 <li><b>Energiequalität prüfen</b> &ndash; Excel-Bericht über fehlerhafte Viertelstunden (optional).</li>
+<li><b>Zusatzpositionen (Ablesungen)</b> &ndash; nur für Mitglieder, deren Verbrauch nicht in EEG Faktura
+ ankommt (z.&nbsp;B. gemessen vor dem Wechselrichter): alten und neuen Zählerstand und den Grund eintragen.
+ Die Differenz wird mit dem Verbrauchstarif des Mitglieds auf seiner Rechnung ergänzt und mit eingezogen.
+ Der letzte Zählerstand wird gemerkt; fehlt eine fällige Ablesung, warnt die Prüfung.
+ In EEG Faktura fehlt dieser Betrag &ndash; maßgeblich sind die SEPA-Dateien.</li>
 <li><b>Abrechnung prüfen und freigeben</b> &ndash; Pflicht; ohne Freigabe sind die folgenden Schritte gesperrt.
  <ul>
  <li><i>Abweichung</i>: abgerechnete kWh gegen Energiedaten &ndash; sollte 0 sein. Sonst in EEG Faktura
@@ -116,6 +121,11 @@ and resized by dragging.</p>
 <ol>
 <li><b>Check data</b> &ndash; a quick list of findings (optional).</li>
 <li><b>Check energy quality</b> &ndash; an Excel report of faulty quarter-hours (optional).</li>
+<li><b>Extra positions (meter readings)</b> &ndash; only for members whose consumption never reaches
+ EEG Faktura (e.g. measured before the inverter): enter the previous and current reading and the reason.
+ The difference is added to the member's invoice at their consumption tariff and collected with it.
+ The last reading is remembered; the review warns when a due reading is missing.
+ EEG Faktura does not have this amount &ndash; the SEPA files are the record.</li>
 <li><b>Review and approve billing</b> &ndash; required; the later steps stay locked until it is done.
  <ul>
  <li><i>Difference</i>: billed kWh against the energy data &ndash; should be 0. Otherwise refresh the preview

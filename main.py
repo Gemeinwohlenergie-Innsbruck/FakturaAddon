@@ -21,6 +21,8 @@ from tables import DataFrameTable, SortableItem
 from help import HelpDialog
 import ledger
 import review
+import extras
+from extras_dialog import ExtrasDialog
 from exporting import produce_sepa_export_dfs, produce_invoices_and_save
 from selection import select_invoice_positions, members_with_invoices, documents_of_member, document_ids, invoice_file_stem
 from config import ENV_PATH, load_env
@@ -659,6 +661,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.approval = None
         self.data_fingerprint = ""
         self.energy_source = ""
+        # Extra positions (extras.py): what was added to this run's invoices.
+        self.extra_applied, self.extra_problems, self.extra_missing = [], [], []
         self.init_data()
         self.init_Ui()
 
@@ -836,6 +840,7 @@ class MainWindow(QtWidgets.QMainWindow):
     WORKFLOW_STEPS = [
         ("validate",        "Daten prüfen",              False),
         ("check_energy",    "Energiequalität prüfen",    True),
+        ("extras",          "Zusatzpositionen (Ablesungen)", True),
         ("review",          "Abrechnung prüfen und freigeben", False),
         ("create_invoices", "Rechnungen erstellen",      False),
         ("send_mail",       "Rechnungen verschicken",    False),
@@ -856,6 +861,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return {
             "validate": [] if has_invoices else [tr("Rechnungsdaten")],
             "check_energy": [] if has_qov else [tr("Quartalsenergiedaten QoV")],
+            "extras": [] if has_invoices else [tr("Rechnungsdaten")],
             "review": [label for label, ok in [
                 (tr("Rechnungsdaten"), has_invoices),
                 (tr("Stammdaten"), has_master),
@@ -904,7 +910,34 @@ class MainWindow(QtWidgets.QMainWindow):
             resolve_name=resolve_name_in_energydata,
             members_with_invoices=members_with_invoices,
             exported=ledger.last_done(ledger.SEPA, creditor) if creditor else None,
-            mailed=ledger.last_done(ledger.MAIL, creditor) if creditor else None)
+            mailed=ledger.last_done(ledger.MAIL, creditor) if creditor else None
+        ) + extras.findings(self.extra_applied, self.extra_problems, self.extra_missing)
+
+    def apply_extra_positions(self):
+        """Rebuild the invoice data from the export plus this period's extra positions.
+
+        The export itself (invoices.original_data) is never changed; the copy
+        with the extras is what every later step reads, and the fingerprint
+        changes with it, so adding or changing one voids an earlier approval.
+        """
+        original = getattr(self.invoices, "original_data", None)
+        if original is None:
+            return
+        self.invoices.data = original
+        creditor, period = self.creditor_key(), self.billing_label()
+        try:
+            store = extras.load_store()
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, tr("Zusatzpositionen"),
+                                tr("Die gespeicherten Zählerstände konnten nicht gelesen werden:\n{error}",
+                                   error=e))
+            store = {"version": 1, "communities": {}}
+        entries = extras.entries_for(store, creditor, period) if creditor and period else []
+        self.invoices.data, self.extra_applied, self.extra_problems = extras.apply(original, entries)
+        self.extra_missing = extras.missing_readings(store, creditor, period) if creditor else []
+        invoice_list = self.invoices.data["list"]
+        self.reload_table_view("0_0", invoice_list[invoice_list["Dokumenttyp"] == "Rechnung"])
+        self.reload_table_view("1_0", invoice_list[invoice_list["Dokumenttyp"].isin(["Gutschrift", "Information"])])
 
     def mark_step_done(self, key):
         self.completed_steps.add(key)
@@ -984,6 +1017,7 @@ class MainWindow(QtWidgets.QMainWindow):
             invoicedata = self.invoices.load_data(filepath=filepath)
             if invoicedata is None:
                 return
+            self.invoices.original_data = invoicedata
             invoicequart = invoicedata["detailed"]["Abrechnung"].iloc[0]
             self.thisinvoices_year = invoicequart.split("-")[-2]
             self.thisinvoice_quart = invoicequart.split("-")[-1]
@@ -994,6 +1028,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.reload_table_view("1_0", transfer)
             panel.set_path("invoices", filepath)
             self.invoicesdata_loaded = True
+            self.apply_extra_positions()
             self.on_data_changed()
 
         def load_template_invoice_from_fp(filepath):
@@ -1176,7 +1211,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_header.setText(tr(
             "Abrechnung {year} Q{quarter}  ·  {debit} Rechnungen, {credit} Gutschriften  ·  {energy}",
             year=self.thisinvoices_year, quarter=self.thisinvoice_quart,
-            debit=n_debit, credit=n_credit, energy=energy) + test_suffix)
+            debit=n_debit, credit=n_credit, energy=energy)
+            + (tr("  ·  {n} Zusatzposition(en)", n=len(self.extra_applied)) if self.extra_applied else "")
+            + test_suffix)
         self.status_header.setObjectName("statusHeader")
         self.status_header.style().polish(self.status_header)
         self.setWindowTitle(f'{tr("Faktura Infinity Addon")} - '
@@ -1607,6 +1644,11 @@ class MainWindow(QtWidgets.QMainWindow):
             table = review.review_table(self.invoices, self.masterdata, self.energydata, findings)
             rows = review.summary(self.invoices, self.masterdata, self.energydata, findings, table,
                                   self.energy_source)
+            if self.extra_applied:
+                added = sum((gross for *_, gross in self.extra_applied), Decimal(0))
+                rows.append((tr("Zusatzpositionen (nicht in EEG Faktura)"),
+                             tr("{n} · +{total}", n=len(self.extra_applied),
+                                total=validation.format_euro(added))))
             fingerprint = review.fingerprint(self.invoices, self.masterdata, self.energydata)
             dialog = ReviewDialog(table, rows, findings, fingerprint,
                                   period_label=self.billing_label(),
@@ -2041,8 +2083,32 @@ class MainWindow(QtWidgets.QMainWindow):
                 #     # MailAdressSelection(self.emails, "An welche Mailadressen soll ich die Rechnungen schicken")
         # when we have api capabilities we can use this
         # ["Login in EEG Faktura", "", login_eeg_faktura],
+        def open_extras():
+            if self.invoices.data is None or getattr(self.invoices, "original_data", None) is None:
+                return
+            creditor, period = self.creditor_key(), self.billing_label()
+            if not creditor or not period:
+                QMessageBox.information(self, tr("Zusatzpositionen"),
+                                        tr("Den Rechnungsdaten fehlen Gläubiger-IBAN oder Abrechnungszeitraum."))
+                return
+            try:
+                store = extras.load_store()
+            except (OSError, ValueError) as e:
+                QMessageBox.critical(self, tr("Zusatzpositionen"),
+                                     tr("Die gespeicherten Zählerstände konnten nicht gelesen werden:\n{error}",
+                                        error=e))
+                return
+            dialog = ExtrasDialog(store, creditor, period, self.invoices.original_data, parent=self)
+            dialog.exec_()
+            if dialog.changed:
+                self.apply_extra_positions()
+                self.on_data_changed()
+            if self.extra_applied and not self.extra_missing and not self.extra_problems:
+                self.mark_step_done("extras")
+
         menubardata = [[tr("Daten prüfen"), "", run_validation, "validate"],
                        [tr("Überprüfe die Qualität der Energiedaten"), "", check_energydata, "check_energy"],
+                       [tr("Zusatzpositionen (Ablesungen)…"), "", open_extras, "extras"],
                        [tr("Abrechnung prüfen und freigeben"), "", open_review, "review"],
                        [tr("Erstelle alle Rechnungen"), "", create_invoices_and_save, "create_invoices"],
                        [tr("Verschicke die Rechnungen per Mail"), "", send_invoices_mail, "send_mail"],
