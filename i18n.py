@@ -603,6 +603,8 @@ EN = {
     'In welchem Format sollen die Rechnungen gespeichert werden?':
         'Which format should the invoices be saved in?',
     # Extra positions (extras.py, extras_dialog.py)
+    'z. B. {example}':
+        'e.g. {example}',
     'Zusatzpositionen (Ablesungen)':
         'Extra positions (meter readings)',
     'Zusatzpositionen (Ablesungen)…':

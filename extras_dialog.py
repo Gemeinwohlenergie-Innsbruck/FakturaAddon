@@ -21,7 +21,9 @@ from i18n import tr
 def _tariff_text(tariff):
     unit = "ct/kWh" if tariff["unit"] == "Ct" else "€/kWh"
     vat = f"{extras.format_number(tariff['vat_rate'], 0)} % USt" if tariff["vat_applies"] else tr("ohne USt")
-    return f"{tariff['tariff']} · {extras.format_number(tariff['price'])} {unit} · {vat}"
+    # Two lines, not a word-wrapped one: a wrapped QLabel in a QFormLayout
+    # gets the height of one line on macOS and overlaps the next row.
+    return f"{tariff['tariff']}\n{extras.format_number(tariff['price'])} {unit} · {vat}"
 
 
 class ReadingDialog(QDialog):
@@ -32,10 +34,14 @@ class ReadingDialog(QDialog):
         self.setWindowTitle(tr("Zusatzposition"))
         self.store, self.creditor, self.period, self.tariffs = store, creditor, period, tariffs
         self.result_extra, self.every_quarter = None, every_quarter
-        self.resize(560, 0)
+        self.setMinimumWidth(620)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        # The macOS style keeps fields at their size hint, which cut the
+        # invoice text off after a few words.
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.member = QComboBox()
         for key, tariff in sorted(tariffs.items(), key=lambda item: item[1]["name"].casefold()):
             self.member.addItem(f"{tariff['name']} ({tr('Nr.')} {tariff['member']})", key)
@@ -44,15 +50,14 @@ class ReadingDialog(QDialog):
             self.member.setEnabled(False)
         form.addRow(tr("Mitglied"), self.member)
         self.tariff_label = QLabel()
-        self.tariff_label.setWordWrap(True)
         form.addRow(tr("Tarif"), self.tariff_label)
         self.description = QLineEdit()
         form.addRow(tr("Text auf der Rechnung"), self.description)
         self.previous = QLineEdit()
-        self.previous.setPlaceholderText("z. B. 12.345,6")
+        self.previous.setPlaceholderText(tr("z. B. {example}", example="12.345,6"))
         form.addRow(tr("Zählerstand alt (kWh)"), self.previous)
         self.current = QLineEdit()
-        self.current.setPlaceholderText("z. B. 12.789,0")
+        self.current.setPlaceholderText(tr("z. B. {example}", example="12.789,0"))
         form.addRow(tr("Zählerstand neu (kWh)"), self.current)
         self.reason = QLineEdit()
         self.reason.setPlaceholderText(tr("z. B. Ablesung vom 30.09.2026 durch …"))
