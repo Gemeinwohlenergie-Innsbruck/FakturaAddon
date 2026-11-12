@@ -37,3 +37,21 @@ def test_test_mode_sends_to_the_test_address_and_says_for_whom():
     message = mail(test_recipient="sam@example.at")
     assert message["To"] == "sam@example.at"
     assert message["Subject"].startswith("[TEST → anna@example.at] ")
+
+
+def test_mail_carries_both_transparent_logos():
+    from PIL import Image
+    import theme
+    message = mail()
+    cids = {part["Content-ID"] for part in message.walk() if part.get_content_maintype() == "image"}
+    assert cids == {"<gei-logo>", "<gei-logo-dark>"}
+    for dark in (False, True):
+        image = Image.open(theme.mail_logo_path(dark=dark))
+        assert image.mode == "RGBA" and image.getpixel((0, 0))[3] == 0
+
+
+def test_preview_drops_the_dark_logo():
+    from emailing import DARK_LOGO_BLOCK
+    html = template().render(name="Anna", quart="3", year="2026")
+    assert "cid:gei-logo-dark" in html
+    assert "cid:gei-logo-dark" not in DARK_LOGO_BLOCK.sub("", html)

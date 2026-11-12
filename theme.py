@@ -43,6 +43,11 @@ def logo_path():
     return resource_path("assets", "gei_logo.png")
 
 
+def mail_logo_path(dark=False):
+    """Transparent wordmarks for the invoice mail (build_tools/make_mail_logos.py)."""
+    return resource_path("assets", "mail_logo_dark.png" if dark else "mail_logo.png")
+
+
 def app_icon_path():
     """The square mark, for the Dock, taskbar and window icon.
 

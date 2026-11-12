@@ -14,6 +14,7 @@ from smtplib import SMTP
 import numpy as np
 import smtplib, ssl
 import os
+import re
 import imaplib
 from datetime import datetime
 
@@ -377,6 +378,8 @@ def render_invoice_mail_body(template, receiver_forename, invquart, invyear, mas
 
 
 LOGO_CID = "gei-logo"
+LOGO_DARK_CID = "gei-logo-dark"
+DARK_LOGO_BLOCK = re.compile(r"<!--dark-logo-->.*?<!--/dark-logo-->", re.S)
 
 
 def build_invoice_email(sender_email, sender_name, receiver_email, receiver_forename,
@@ -408,12 +411,14 @@ def build_invoice_email(sender_email, sender_name, receiver_email, receiver_fore
                      f"Liebe Grüße\n{sender_name}\n")
     email.set_content(plain_content)
     email.add_alternative(html_body, subtype='html')
-    if f"cid:{LOGO_CID}" in html_body:
-        # Mail clients cannot load the logo from the app: it travels inside
-        # the mail as a related image, which the template references by cid.
-        with open(theme.logo_path(), "rb") as logo:
-            email.get_payload()[-1].add_related(logo.read(), maintype="image", subtype="png",
-                                                cid=f"<{LOGO_CID}>", filename="logo.png")
+    # Mail clients cannot load the logo from the app: it travels inside the
+    # mail as a related image, which the template references by cid.
+    for cid, path, name in ((LOGO_CID, theme.mail_logo_path(), "logo.png"),
+                            (LOGO_DARK_CID, theme.mail_logo_path(dark=True), "logo-dark.png")):
+        if f"cid:{cid}" in html_body:
+            with open(path, "rb") as logo:
+                email.get_payload()[-1].add_related(logo.read(), maintype="image", subtype="png",
+                                                    cid=f"<{cid}>", filename=name)
 
     if fp_to_invoice:
         with open(fp_to_invoice, 'rb') as content_file:
@@ -739,7 +744,8 @@ class SendPreviewDialog(QDialog):
             return ""
         # The preview has no attachments to resolve cid: against; show the
         # logo from the app's own copy instead.
-        html = html.replace(f"cid:{LOGO_CID}", QUrl.fromLocalFile(theme.logo_path()).toString())
+        html = DARK_LOGO_BLOCK.sub("", html)
+        html = html.replace(f"cid:{LOGO_CID}", QUrl.fromLocalFile(theme.mail_logo_path()).toString())
         try:
             soup = BeautifulSoup(html, "html.parser")
             body = soup.find(id="MAILSTYLE")
