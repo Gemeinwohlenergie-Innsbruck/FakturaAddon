@@ -276,6 +276,8 @@ EN = {
 
     # --- errors, files -----------------------------------------------------
     "Datei nicht lesbar": "File not readable",
+    "Es fehlen die Blätter {missing}. Die Datei enthält: {found}.\n\nErwartet wird der EXCEL-Export aus dem Abrechnungsmodus von EEG Faktura (…_abrechnung_Abr_YQ-…_export.xlsx).":
+        "The sheets {missing} are missing. The file contains: {found}.\n\nExpected is the EXCEL export from EEG Faktura's Abrechnungsmodus (…_abrechnung_Abr_YQ-…_export.xlsx).",
     "Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)":
         "The selected file is not readable (is it in the right format?)",
     "Rechnungsvorlage": "Invoice template",

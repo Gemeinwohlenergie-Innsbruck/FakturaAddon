@@ -69,15 +69,25 @@ class Data():
 def load_invoices(filepath='',nc = False):
     print(filepath)
     if not nc:
+        data = None
         try:
-            data = pd.read_excel(filepath,sheet_name="Liste")
-            datadetailed = pd.read_excel(filepath,sheet_name="Details")
-        except:
-            data = None
-            datadetailed = None
+            book = pd.ExcelFile(filepath)
+            missing = [name for name in ("Liste", "Details") if name not in book.sheet_names]
+            if missing:
+                reason = tr("Es fehlen die Blätter {missing}. Die Datei enthält: {found}.\n\n"
+                            "Erwartet wird der EXCEL-Export aus dem Abrechnungsmodus von EEG Faktura "
+                            "(…_abrechnung_Abr_YQ-…_export.xlsx).",
+                            missing=", ".join(missing), found=", ".join(book.sheet_names))
+            else:
+                data = pd.read_excel(book, sheet_name="Liste")
+                datadetailed = pd.read_excel(book, sheet_name="Details")
+        except Exception as e:
+            reason = f"{type(e).__name__}: {e}"
+        if data is None:
             errorbox = QMessageBox()
             errorbox.setWindowTitle(tr("Datei nicht lesbar"))
-            errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)"))
+            errorbox.setText(tr("Ausgewählte Datei ist nicht lesbar (ist sie im richtigen Format?)")
+                             + f"\n\n{os.path.basename(str(filepath))}\n\n{reason}")
             errorbox.exec_()
     else:
         print("Nextcloud loading")
